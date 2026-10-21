@@ -58,12 +58,17 @@ let currentSection = ''
 
 function record(row) {
   rows.push({ section: currentSection, note: '', ...row })
-  const mark = row.satisfied ? '✓' : row.kind === 'todo' ? '✗' : '✗'
-  const suffix = row.satisfied ? (row.kind === 'todo' ? '（后端已修，删掉本行 TODO 标注即可）' : '') : ` — ${row.note}`
-  console.log(`  ${mark} ${row.name}${suffix}`)
+  const suffix = row.satisfied ? '' : ` — ${row.note}`
+  console.log(`  ${row.satisfied ? '✓' : '✗'} ${row.name}${suffix}`)
 }
 
-/** 契约必须满足；不满足即失败。 */
+/**
+ * 契约必须满足；不满足即失败。
+ *
+ * 本表**只有这一种行**：曾经有过 `pendingBackend()`（"契约已定、后端未合"的 TODO 行），
+ * 它今天零调用，但留着就是一条 abuse 通道——加一行就能标一打 TODO 绕过门禁。
+ * 现在改为结构断言（见 `assertNoTodoRows`）：想加回 todo 行必须先删掉那条断言，删断言在 diff 里看得见。
+ */
 function check(name, cond, extra) {
   record({
     name,
@@ -73,30 +78,16 @@ function check(name, cond, extra) {
   })
 }
 
-/**
- * 契约已定、后端还没合的行：**显式标注**，断言「当前真实行为」，不静默放行、也不从表里删。
- *
- * 行的 satisfied 记的是「契约是否已满足」：真实后端为 false（红行 + TODO），mock 侧已满足则为 true，
- * `--source both` 会把这种差异作为「已知分叉」单独列出，而不是混进失败。
- *
- * v1.2.3 之后本表已无 TODO 行（后端已合），保留此函数供下一次契约先行、实现滞后的场景使用。
- */
-export function pendingBackend(name, currentHolds, contractHolds, todo, extra) {
-  const note = String(JSON.stringify(extra) ?? '').slice(0, 200)
-  if (!contractHolds && !currentHolds) {
-    // 现状既不是旧行为也不符合契约：这不是「等后端」，是有人改坏了
-    record({ name, kind: 'must', satisfied: false, note: `现状既不是旧行为也不符合契约：${note}` })
-    return
+/** 结构性断言：整张表只能有 `kind === 'must'`。 */
+function assertNoTodoRows(list) {
+  const unexpected = list.filter((row) => row.kind !== 'must')
+  if (unexpected.length) {
+    console.error(
+      `  ✗ 出现非 must 行（kind 只能是 'must'）：${unexpected.map((r) => `${r.kind}:${r.name}`).join(', ')}`,
+    )
   }
-  record({
-    name,
-    kind: 'todo',
-    satisfied: !!contractHolds,
-    todo,
-    note: contractHolds ? '' : `TODO(${todo}) 现状：${note}`,
-  })
+  return unexpected.length === 0
 }
-
 
 /** 执行整张用例表。`transport` 决定打真后端还是 mock；返回行记录供 diff。 */
 export async function runPlan(opts) {
@@ -154,12 +145,32 @@ export async function runPlan(opts) {
   bailIfFailed(cleaned, '哨兵软删')
 
 
-/** 清场：软删所有既有项目（公开面归零，计数才能断言）。 */
-async function resetProjects() {
+/**
+ * 清场：**只软删本次 RUN 前缀的项目**，绝不发全局清理。
+ *
+ * 全局 reset（删掉库里所有项目）在端口撞车时会把别人的库清空，这是 P0：假绿是骗人，这个是删数据。
+ * 本脚本的自证只证明「这套库能读能写」，不证明「这套库专属于我」，所以清理必须按自己的命名前缀收窄。
+ * 代价是库里可能有别的 RUN 残留：计数断言因此全部改成「基线 + 本次增量」，见 `attachBaseline()`。
+ */
+async function cleanupRunProjects() {
   const existing = await api('GET', '/admin/projects?pageSize=100&includeDeleted=true')
-  for (const item of existing.json?.items ?? []) {
+  const mine = (existing.json?.items ?? []).filter((item) => item.slug.startsWith(`${RUN}-`))
+  for (const item of mine) {
     if (!item.deleted_at) await api('DELETE', `/admin/projects/${item.id}`)
   }
+  return mine.length
+}
+
+/** 清场后的公开面基线（别的 RUN 残留会一直存在，计数断言一律相对它）。 */
+let baseline = { total: 0, counts: { all: 0, ongoing: 0, launched: 0 } }
+
+async function attachBaseline() {
+  const res = await api('GET', '/projects?pageSize=1')
+  baseline = {
+    total: res.json?.total ?? 0,
+    counts: res.json?.counts ?? { all: 0, ongoing: 0, launched: 0 },
+  }
+  console.log(`  公开面基线：total=${baseline.total} counts=${JSON.stringify(baseline.counts)}（本次断言全部相对基线）`)
 }
 
 async function createProject(slug, patch = {}) {
@@ -174,7 +185,8 @@ async function setStatus(id, publish_status) {
   return res.json
 }
 
-await resetProjects()
+await cleanupRunProjects()
+await attachBaseline()
 
 // ---------------------------------------------------------------- 项目：列表
 section('项目列表 / 分段计数 / 搜索 / 技术栈 / 排序')
@@ -235,10 +247,22 @@ const delRes = await api('DELETE', `/admin/projects/${deleted.id}`)
 check('软删除返回详情且带 deleted_at', delRes.status === 200 && delRes.json?.deleted_at !== null, delRes.status)
 
 const all = await api('GET', '/projects')
-check('列表只含 3 个可见项目', all.json?.total === 3, all.json?.total)
+/** 只取本次 RUN 造的项目（库里可能有别的 RUN 残留，顺序断言必须只在自己这批上判）。 */
+const mineOf = (res) => (res.json?.items ?? []).filter((i) => i.slug.startsWith(`${RUN}-`))
+
+check('本次 3 个可见项目都在列表里', mineOf(all).length === 3, all.json?.items?.map((i) => i.slug))
+check('total = 基线 + 本次 3 个', all.json?.total === baseline.total + 3, {
+  total: all.json?.total,
+  baseline: baseline.total,
+})
 check(
-  'counts = {all 3, ongoing 2, launched 1}',
-  JSON.stringify(all.json?.counts) === JSON.stringify({ all: 3, ongoing: 2, launched: 1 }),
+  'counts = 基线 + {all 3, ongoing 2, launched 1}',
+  JSON.stringify(all.json?.counts) ===
+    JSON.stringify({
+      all: baseline.counts.all + 3,
+      ongoing: baseline.counts.ongoing + 2,
+      launched: baseline.counts.launched + 1,
+    }),
   all.json?.counts,
 )
 check('软删项目不出现在列表', !JSON.stringify(all.json).includes(slugOf('deleted')))
@@ -253,38 +277,68 @@ check(
 )
 check(
   '默认按最近更新倒序',
-  all.json?.items?.map((i) => i.slug).join(',') === [slugOf('portfolio'), slugOf('crawler'), slugOf('chart')].join(','),
-  all.json?.items?.map((i) => i.slug),
+  mineOf(all)
+    .map((i) => i.slug)
+    .join(',') === [slugOf('portfolio'), slugOf('crawler'), slugOf('chart')].join(','),
+  mineOf(all).map((i) => i.slug),
 )
 
 const launched = await api('GET', '/projects?progress=launched')
-check('progress=launched 只留已上线', launched.json?.items?.length === 1 && launched.json.items[0].slug === slugOf('chart'))
+check(
+  'progress=launched 只留已上线',
+  mineOf(launched).length === 1 && mineOf(launched)[0].slug === slugOf('chart'),
+  mineOf(launched).map((i) => i.slug),
+)
 check('分段过滤后 counts 不变', JSON.stringify(launched.json?.counts) === JSON.stringify(all.json?.counts), launched.json?.counts)
 
 const byName = await api('GET', `/projects?search=${encodeURIComponent('抓取')}`)
-check('search 命中名称', byName.json?.items?.map((i) => i.slug).join(',') === slugOf('crawler'), byName.json?.items?.map((i) => i.slug))
+check(
+  'search 命中名称',
+  mineOf(byName)
+    .map((i) => i.slug)
+    .join(',') === slugOf('crawler'),
+  byName.json?.items?.map((i) => i.slug),
+)
 const bySummary = await api('GET', `/projects?search=${encodeURIComponent('图表')}`)
-check('search 命中摘要', bySummary.json?.items?.map((i) => i.slug).join(',') === slugOf('chart'), bySummary.json?.items?.map((i) => i.slug))
-check('搜索会重算 counts', bySummary.json?.counts?.all === 1, bySummary.json?.counts)
+check(
+  'search 命中摘要',
+  mineOf(bySummary)
+    .map((i) => i.slug)
+    .join(',') === slugOf('chart'),
+  bySummary.json?.items?.map((i) => i.slug),
+)
+check(
+  '搜索后 counts 与 total 同口径（都只算搜索结果）',
+  bySummary.json?.counts?.all === bySummary.json?.total,
+  { counts: bySummary.json?.counts, total: bySummary.json?.total },
+)
 
 const py = await api('GET', '/projects?technology=Python')
-check('technology=Python 命中 1 个', py.json?.items?.length === 1 && py.json.items[0].slug === slugOf('crawler'), py.json?.items?.map((i) => i.slug))
+check('technology=Python 命中 1 个', mineOf(py).length === 1 && mineOf(py)[0].slug === slugOf('crawler'), mineOf(py).map((i) => i.slug))
 const repeat = await api('GET', '/projects?technology=Vue%203&technology=SVG')
-check('technology 重复参数 = 任一命中', repeat.json?.items?.length === 2, repeat.json?.items?.map((i) => i.slug))
+check('technology 重复参数 = 任一命中', mineOf(repeat).length === 2, mineOf(repeat).map((i) => i.slug))
 const csv = await api('GET', '/projects?technology=Vue%203,SVG')
-check('technology 逗号分隔等价值重复参数', csv.json?.items?.length === 2, csv.json?.items?.map((i) => i.slug))
+check('technology 逗号分隔等价值重复参数', mineOf(csv).length === 2, mineOf(csv).map((i) => i.slug))
 const lower = await api('GET', '/projects?technology=vue%203')
 check('技术栈精确匹配（大小写敏感）', lower.json?.items?.length === 0, lower.json?.items?.map((i) => i.slug))
 
 const stars = await api('GET', '/projects?sort=stars')
 check(
   'sort=stars 降序',
-  stars.json?.items?.map((i) => i.slug).join(',') === [slugOf('chart'), slugOf('portfolio'), slugOf('crawler')].join(','),
-  stars.json?.items?.map((i) => i.slug),
+  mineOf(stars)
+    .map((i) => i.slug)
+    .join(',') === [slugOf('chart'), slugOf('portfolio'), slugOf('crawler')].join(','),
+  mineOf(stars).map((i) => i.slug),
 )
 
 const page2 = await api('GET', '/projects?page=2&pageSize=2')
-check('分页第二页', page2.json?.items?.length === 1 && page2.json.page === 2, page2.json?.items?.map((i) => i.slug))
+check(
+  '分页第二页：page 回显、条数 ≤ pageSize、total 与整表一致',
+  page2.json?.page === 2 &&
+    (page2.json?.items ?? []).length <= 2 &&
+    page2.json?.total === all.json?.total,
+  { page: page2.json?.page, total: page2.json?.total, len: page2.json?.items?.length },
+)
 {
   // 契约 1 拆两类：参数非法 400；语义越界（page > totalPages）200 + 空 items + 真实 total/totalPages
   const beyond = await api('GET', '/projects?page=99')
@@ -311,6 +365,30 @@ check('分页第二页', page2.json?.items?.length === 1 && page2.json.page === 
       bad.json?.error?.code,
     )
   }
+
+  // 错误体结构（契约 §1.2）：details 的键是 field/code/message 三个，一个不多一个不少。
+  // code 的值不承诺稳定，但**键必须在**——mock 曾把 code 整个剥掉，结构偏离比词表一致更贵。
+  const structure = await api('GET', '/projects?page=0&pageSize=999')
+  const detailKeys = Object.keys(structure.json?.error?.details?.[0] ?? {}).sort()
+  check(
+    'details[] 结构是 field / code / message 三键',
+    detailKeys.join(',') === ['code', 'field', 'message'].join(','),
+    detailKeys,
+  )
+  check(
+    'details[] 每条都带 field 与 message（可展示）',
+    (structure.json?.error?.details ?? []).every(
+      (d) => typeof d.field === 'string' && d.field.length > 0 && typeof d.message === 'string' && d.message.length > 0,
+    ),
+    structure.json?.error?.details,
+  )
+  check(
+    'error 信封的键只有 code / message / details / requestId',
+    Object.keys(structure.json?.error ?? {})
+      .filter((k) => !['code', 'message', 'details', 'requestId'].includes(k))
+      .length === 0,
+    Object.keys(structure.json?.error ?? {}),
+  )
 }
 // 表外抽样 0：search 超长按参数错误拒（与前端 clampSearch 上限 200 对齐）
 {
@@ -397,11 +475,24 @@ for (const [role, slug] of [
 }
 
 const techs = await api('GET', '/technologies')
-check(
-  'technologies 只含可见项目技术栈',
-  JSON.stringify(techs.json?.items) === JSON.stringify(['Python', 'SVG', 'TypeScript', 'Vite', 'Vue 3']),
-  techs.json?.items,
-)
+{
+  // 不断言「整份列表等于我这几个」：库里可能有别的 RUN 残留，那是合法数据。
+  // 契约性质是「只汇总可见项目的技术栈」——所以断言两边：本次可见项目的技术栈在，不可见项目的不在。
+  const items = techs.json?.items ?? []
+  const visible = ['Python', 'SVG', 'TypeScript', 'Vite', 'Vue 3']
+  const invisible = ['Hugo' /* 归档 */, 'Rust' /* 草稿 */, 'Go' /* 已软删 */]
+  check('technologies 含本次可见项目的技术栈', visible.every((t) => items.includes(t)), items)
+  check(
+    'technologies 不含不可见项目（归档/草稿/软删）的技术栈',
+    invisible.every((t) => !items.includes(t)),
+    items.filter((t) => invisible.includes(t)),
+  )
+  check(
+    'technologies 去重且升序（码点序，与实现一致）',
+    JSON.stringify(items) === JSON.stringify([...new Set(items)].sort()),
+    items,
+  )
+}
 
 // ---------------------------------------------------------------- 笔记
 section('笔记（N:1）/ 摘要字段 / 可见性 / 301')
@@ -560,43 +651,24 @@ const realTransport = async (method, path, body, headers) => {
 }
 
 const isMain = process.argv[1] ? process.argv[1].endsWith('run.mjs') : false
-const STRICT = process.argv.includes('--strict')
+// 本表只含 must 行，`--strict` / `--no-strict` 都不改变结果：任何一行不满足即退出 1。
+// 参数仍被接受，是为了让旧命令（README、CI 历史记录）不会因为多了个 flag 就报未知参数。
 const argv = process.argv.slice(2)
 const sourceEq = argv.find((arg) => arg.startsWith('--source='))
 const sourceIdx = argv.indexOf('--source')
 const SOURCE = sourceEq ? sourceEq.split('=')[1] : sourceIdx >= 0 ? (argv[sourceIdx + 1] ?? 'real') : 'real'
 
-/**
- * 「已知分叉」的硬上限（写死，不留成可配置变量）。
- *
- * 机制有被滥用的风险：把真不一致标成 TODO 就能绕过门禁。所以 ① 每行 TODO 必须写可 git 校验的分支名
- *（校验命令见 README，不进脚本——无网/无 git 的环境不该被卡死）；② 分叉行数不得超这个上限。
- * 后端每修完一组就把数字往下调，最终归零；当前为 0（v1.2.3 两项已合）。
- */
-const MAX_KNOWN_DIVERGENCES = 0
-
-function summarize(planRows) {
-  const failures = planRows.filter((row) => row.kind === 'must' && !row.satisfied)
-  const pending = planRows.filter((row) => row.kind === 'todo' && !row.satisfied)
-  const todoDone = planRows.filter((row) => row.kind === 'todo' && row.satisfied)
-  return { failures, pending, todoDone }
-}
+// 没有「已知分叉」这回事：整张表只有 must 行（结构断言 assertNoTodoRows）。
+// 曾经有过 MAX_KNOWN_DIVERGENCES 常量与 TODO 标注，两者都被移除——把真不一致标成 TODO 就能绕过门禁。
 
 function printSummary(planRows) {
-  const { failures, pending, todoDone } = summarize(planRows)
+  const failures = planRows.filter((row) => !row.satisfied)
   section('结果')
-  const must = planRows.filter((row) => row.kind === 'must')
-  console.log(`  契约必须项：${must.length - failures.length}/${must.length} 通过`)
-  if (pending.length) {
-    console.log(`  带 TODO 标注、等后端合的行：${pending.length} 项（红行 = 后端还没合，不是前端没改对）`)
-    for (const row of pending) console.log(`    ✗ ${row.name} [${row.todo}]`)
-  }
-  if (todoDone.length) {
-    console.log(`  后端已修、标注可以删的行：${todoDone.length} 项`)
-    for (const row of todoDone) console.log(`    ✓ ${row.name}`)
-  }
+  console.log(`  契约项：${planRows.length - failures.length}/${planRows.length} 通过`)
   if (failures.length) failures.forEach((row) => console.log(`    ✗ ${row.name} — ${row.note}`))
-  return { failures, pending, code: failures.length || (STRICT && pending.length) ? 1 : 0 }
+  const shapeOk = assertNoTodoRows(planRows)
+  // 结构不合法（出现非 must 行）与断言失败一样算失败
+  return { failures, code: failures.length || !shapeOk ? 1 : 0 }
 }
 
 /** 逐行比对两个 runner：同名行必须存在，且「契约是否满足」结论一致。 */
@@ -604,7 +676,7 @@ function diffRows(realRows, mockRows) {
   section('双向比对（real vs mock）')
   const byName = new Map(mockRows.map((row) => [row.name, row]))
   const diverged = []
-  const known = []
+  // 任何一行两侧结论不同都是「真不一致」，没有豁免通道
   for (const real of realRows) {
     const mock = byName.get(real.name)
     if (!mock) {
@@ -614,27 +686,18 @@ function diffRows(realRows, mockRows) {
     }
     byName.delete(real.name)
     if (real.satisfied !== mock.satisfied) {
-      if (real.kind === 'todo' && mock.satisfied) {
-        known.push(real.name)
-        console.log(`  ⚠ 已知分叉（后端未合）：${real.name} — real ${real.satisfied} / mock ${mock.satisfied}`)
-      } else {
-        diverged.push(real.name)
-        console.log(`  ✗ 口径不一致：${real.name} — real ${real.satisfied} / mock ${mock.satisfied}`)
-      }
+      console.log(`  ✗ 口径不一致：${real.name} — real ${real.satisfied} / mock ${mock.satisfied}`)
+      diverged.push(real.name)
     }
   }
   for (const leftover of byName.keys()) {
     console.log(`  ✗ 只有 mock 有这一行：${leftover}`)
     diverged.push(leftover)
   }
-  const same = realRows.length - diverged.length - known.length
-  console.log(`  一致 ${same} 行 / 已知分叉 ${known.length} 行 / 真不一致 ${diverged.length} 行`)
-  if (known.length > MAX_KNOWN_DIVERGENCES) {
-    console.log(
-      `  ✗ 已知分叉 ${known.length} 行超出硬上限 ${MAX_KNOWN_DIVERGENCES}：要么修，要么把上限单独立案往下调，不能就地放过`,
-    )
-    diverged.push(`已知分叉超上限（${known.length} > ${MAX_KNOWN_DIVERGENCES}）`)
-  }
+  const same = realRows.length - diverged.length
+  console.log(`  一致 ${same} 行 / 真不一致 ${diverged.length} 行`)
+  const shapeOk = assertNoTodoRows([...realRows, ...mockRows])
+  if (!shapeOk) diverged.push('出现非 must 行')
   return diverged
 }
 

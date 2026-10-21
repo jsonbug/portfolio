@@ -14,8 +14,7 @@
     "format": "prettier --write .",
     "contract": "node test/contract/run.mjs",
     "contract:mock": "node test/contract/run.mjs --source mock",
-    "contract:both": "node test/contract/run.mjs --source both",
-    "contract:strict": "node test/contract/run.mjs --strict"
+    "contract:both": "node test/contract/run.mjs --source both"
   },
   "dependencies": {
     "dompurify": "^3.4.17",

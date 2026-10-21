@@ -91,16 +91,11 @@ const created = (body: unknown): Response => json(201, body)
 const noContent = (): Response => new Response(null, { status: 204 })
 
 function errorResponse(status: number, code: string, message: string, details?: ErrorDetail[]): Response {
-  // details[].code 一律不外发：契约不定义词表（后端透传 zod issue code，不承诺稳定，前端不得分支）。
-  // 内部校验仍按 code 组织，出门只留 field + message——省掉「mock 自造第三套词表」这类偏差。
-  const publicDetails = details?.map(({ field, message: detailMessage }) => ({ field, message: detailMessage }))
+  // details 结构按契约 §1.2 保留 field/code/message 三个键（code 的值不承诺稳定，客户端不得分支）。
+  // 曾经为了防「按 code 分支」把 code 整个键剥掉——那是 mock 单方面违约：结构偏离比词表一致更贵，
+  // `--source both` 全绿会被误读成「错误体也同构」。
   const envelope: ErrorEnvelope = {
-    error: {
-      code,
-      message,
-      ...(publicDetails ? { details: publicDetails } : {}),
-      requestId: `req_${uid('req')}`,
-    },
+    error: { code, message, ...(details ? { details } : {}), requestId: `req_${uid('req')}` },
   }
   return json(status, envelope)
 }
