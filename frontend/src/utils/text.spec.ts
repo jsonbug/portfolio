@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDate, truncate } from './text'
+import { formatDate, daysAgo, truncate } from './text'
 
 describe('truncate', () => {
   it('原样返回不超过最大长度的文本', () => {
@@ -26,5 +26,24 @@ describe('formatDate', () => {
 
   it('非法日期返回空串', () => {
     expect(formatDate('not-a-date')).toBe('')
+  })
+})
+
+describe('daysAgo', () => {
+  const now = Date.parse('2026-10-21T12:00:00Z')
+
+  it('按整天向下取整', () => {
+    expect(daysAgo('2026-10-21T00:00:00Z', now)).toBe(0)
+    expect(daysAgo('2026-10-19T13:00:00Z', now)).toBe(1)
+    expect(daysAgo('2026-10-18T11:00:00Z', now)).toBe(3)
+  })
+
+  it('未来时间夹到 0', () => {
+    expect(daysAgo('2026-11-01T00:00:00Z', now)).toBe(0)
+  })
+
+  it('null 与非法值返回 null', () => {
+    expect(daysAgo(null, now)).toBeNull()
+    expect(daysAgo('oops', now)).toBeNull()
   })
 })
