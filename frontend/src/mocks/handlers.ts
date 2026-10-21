@@ -523,6 +523,8 @@ function handleAdmin(req: MockRequest): Response {
     if (method === 'GET') {
       const paging = parsePage(query)
       if (paging instanceof Response) return paging
+      const search = parseSearch(query)
+      if (search instanceof Response) return search
       const envelope = listAdminNotes(state, {
         page: paging.page,
         pageSize: paging.pageSize,
