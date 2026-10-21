@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { resetMockDb } from '@/mocks'
+import { handleMockRequest, resetMockDb } from '@/mocks/handlers'
 import HomeView from './HomeView.vue'
 
 const CARD_NAMES = ['项目展示平台', 'Chart Kit', '抓取工具箱']
@@ -190,6 +190,34 @@ describe('HomeView 技术栈与排序', () => {
 
     await waitFor(() => expect(cardNames()).toEqual(['Chart Kit', '项目展示平台', '抓取工具箱']))
     expect(router.currentRoute.value.query.sort).toBe('stars')
+  })
+})
+
+describe('HomeView 截断提示', () => {
+  beforeEach(() => resetMockDb())
+
+  it('可见项目超过 50 个时提示「仅显示前 50 个」，不静默截断', async () => {
+    for (let i = 0; i < 55; i += 1) {
+      const res = handleMockRequest({
+        method: 'POST',
+        path: '/admin/projects',
+        query: new URLSearchParams(),
+        headers: { authorization: 'Bearer mock-token-test' },
+        body: { slug: `bulk-${i}`, name: `批量项目 ${i}`, publish_status: 'published' },
+      })
+      expect(res.status).toBe(201)
+    }
+
+    await renderHome()
+    expect(await screen.findByText('仅显示前 50 个，请用搜索/筛选缩小范围')).toBeInTheDocument()
+    // 只渲染 50 张卡片
+    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(50)
+  })
+
+  it('未超过 50 个时不显示该提示', async () => {
+    await renderHome()
+    await waitForList()
+    expect(screen.queryByText(/仅显示前 50 个/)).not.toBeInTheDocument()
   })
 })
 

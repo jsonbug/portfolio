@@ -6,7 +6,7 @@ import ProjectCard from '@/components/ProjectCard.vue'
 import ProjectCardSkeleton from '@/components/ProjectCardSkeleton.vue'
 import ProjectEmptyState from '@/components/ProjectEmptyState.vue'
 import ProjectFilterBar from '@/components/ProjectFilterBar.vue'
-import { useProjectList } from '@/composables/useProjectList'
+import { LIST_PAGE_SIZE, useProjectList } from '@/composables/useProjectList'
 import {
   DEFAULT_FILTERS,
   isDefaultFilters,
@@ -26,7 +26,7 @@ const route = useRoute()
 const router = useRouter()
 
 const filters = computed(() => parseFilters(route.query))
-const { items, counts, loading, error, reload } = useProjectList(filters)
+const { items, counts, total, loading, error, reload } = useProjectList(filters)
 
 const technologies = ref<string[]>([])
 
@@ -59,6 +59,8 @@ function recentPhrase(days: number | null): string {
 }
 
 const showSkeleton = computed(() => loading.value && items.value.length === 0)
+/** 一次只取 50 条：结果更多时明确提示，不静默截断。 */
+const truncated = computed(() => total.value > LIST_PAGE_SIZE)
 const showEmpty = computed(() => !loading.value && !error.value && items.value.length === 0)
 /** 供读屏播报结果数量变化（视觉上无对应元素）。 */
 const resultAnnouncement = computed(() =>
@@ -108,11 +110,16 @@ function clearFilters(): void {
 
     <ProjectEmptyState v-else-if="showEmpty" :filtered="filtered" @clear="clearFilters" />
 
-    <ul v-else class="grid" :aria-busy="loading">
-      <li v-for="item in items" :key="item.id">
-        <ProjectCard :item="item" />
-      </li>
-    </ul>
+    <template v-else>
+      <ul class="grid" :aria-busy="loading">
+        <li v-for="item in items" :key="item.id">
+          <ProjectCard :item="item" />
+        </li>
+      </ul>
+      <p v-if="truncated" class="truncated">
+        仅显示前 {{ LIST_PAGE_SIZE }} 个，请用搜索/筛选缩小范围
+      </p>
+    </template>
   </main>
 </template>
 
@@ -143,6 +150,13 @@ function clearFilters(): void {
   background: var(--c-fill);
   color: var(--c-danger);
   font-size: var(--fs-small);
+}
+.truncated {
+  margin: var(--space-16) 0 0;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  color: var(--c-text-secondary);
+  text-align: center;
 }
 .grid {
   list-style: none;

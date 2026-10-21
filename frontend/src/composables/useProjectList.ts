@@ -3,6 +3,9 @@ import { listPublicProjects } from '@/api/projects'
 import type { ProjectListItem, ProjectListCounts } from '@/types'
 import type { ProjectListFilters } from './useProjectListFilters'
 
+/** 列表一次取多少条（展示站量级够用，不做加载更多）。 */
+export const LIST_PAGE_SIZE = 50
+
 const EMPTY_COUNTS: ProjectListCounts = { all: 0, ongoing: 0, launched: 0 }
 
 /**
@@ -15,6 +18,7 @@ const EMPTY_COUNTS: ProjectListCounts = { all: 0, ongoing: 0, launched: 0 }
 export function useProjectList(filters: Ref<ProjectListFilters>) {
   const items = ref<ProjectListItem[]>([])
   const counts = ref<ProjectListCounts>({ ...EMPTY_COUNTS })
+  const total = ref(0)
   const loading = ref(true)
   const error = ref('')
   let seq = 0
@@ -26,8 +30,7 @@ export function useProjectList(filters: Ref<ProjectListFilters>) {
     try {
       const res = await listPublicProjects({
         page: 1,
-        // 一次拿全量（展示站项目量级在百以内）；超过上限时后端会夹到 100。
-        pageSize: 50,
+        pageSize: LIST_PAGE_SIZE,
         search: filters.value.q.trim() || undefined,
         technology: filters.value.tech.length ? filters.value.tech : undefined,
         progress: filters.value.progress ?? undefined,
@@ -36,6 +39,7 @@ export function useProjectList(filters: Ref<ProjectListFilters>) {
       if (mine !== seq) return
       items.value = res.items
       counts.value = res.counts
+      total.value = res.total
     } catch (e) {
       if (mine !== seq) return
       error.value = e instanceof Error ? e.message : '加载失败'
@@ -48,5 +52,5 @@ export function useProjectList(filters: Ref<ProjectListFilters>) {
   // 直接监听对象会多打一次请求。
   watch(() => JSON.stringify(filters.value), () => void load(), { immediate: true })
 
-  return { items, counts, loading, error, reload: load }
+  return { items, counts, total, loading, error, reload: load }
 }
