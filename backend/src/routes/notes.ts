@@ -10,15 +10,13 @@ import { validate } from "../lib/zod.js";
 import { resolveSlugAlias } from "../lib/slug.js";
 import { noteInclude, toNoteSummary, toPublicNoteDetail } from "../lib/serialize.js";
 import { PublicNoteListQuerySchema } from "../contract/schemas.js";
+import { escapeLike } from "../lib/like.js";
 
 // 前台可见笔记：自身已发布 + 所属项目已发布未删除（归档/草稿项目的笔记前台不可见，N3 数据保留）
 const PUBLIC_NOTE_WHERE = {
   publish_status: "published",
   project: { publish_status: "published", deleted_at: null },
 } satisfies Prisma.NoteWhereInput;
-
-/** SQL LIKE 的元字符转义：`%` 与 `_` 必须当字面量，否则搜「100%」「a_b」会命中一切。 */
-const escapeLike = (term: string): string => term.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 
 /**
  * 命中的笔记 id（标题或正文包含关键字，字面量匹配）。
