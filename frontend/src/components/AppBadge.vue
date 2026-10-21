@@ -77,7 +77,7 @@ const toneClass = computed(() => TONE_CLASS[props.tone])
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   padding: 2px 10px;
   font-size: var(--fs-mono);
   line-height: 18px;

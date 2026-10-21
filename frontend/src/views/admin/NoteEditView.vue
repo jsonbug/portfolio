@@ -395,7 +395,7 @@ onMounted(() => void load())
 
 .columns {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: 270px minmax(0, 1fr) minmax(0, 1fr);
   flex: 1;
   min-height: 0;
 }

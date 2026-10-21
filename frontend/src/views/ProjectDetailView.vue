@@ -5,7 +5,7 @@ import { getPublicProject } from '@/api/projects'
 import AppBadge from '@/components/AppBadge.vue'
 import LinkTypeIcon from '@/components/LinkTypeIcon.vue'
 import ProgressBadge from '@/components/ProgressBadge.vue'
-import { METRIC_MAX } from '@/constants/limits'
+import { METRIC_LIMITS } from '@/constants/limits'
 import {
   LINK_TYPE_LABELS,
   PROGRESS_LABELS,
@@ -77,8 +77,8 @@ const heroActions = computed(() => {
 /**
  * 元数据 panel 的固定行（空值整行不渲染，走查 #13 的顺序）。
  *
- * F5：「发布状态」与「进展」合成一行「状态」，值是 `已发布 · 进行中` 这种形式——
- * 两行说的是同一件事，分开写既占高度又容易读出「已发布但没上线」的歧义。
+ * 「发布状态」与「进展」拆成两行、各一个徽标（02 稿 + D6「两个维度同屏时上下堆叠、不并排」）。
+ * 上一轮曾合并成一行「状态」并置两个徽标，按稿撤回。
  *
  * 公开 payload 里只有 `progress`：能出现在这里的项目一律已发布，
  * 故发布状态固定为「已发布」（见交付评论里的假设记录）。
@@ -90,15 +90,16 @@ const fixedMeta = computed(() => {
   const item = detail.value
   if (!item) return []
   return [
-    { label: '状态', value: `已发布 · ${PROGRESS_LABELS[item.progress]}`, status: true },
+    { label: '发布状态', value: '已发布', badge: 'published' as const },
+    { label: '进展', value: PROGRESS_LABELS[item.progress], badge: 'progress' as const },
     {
       label: '起始年份',
       value: item.start_year != null ? String(item.start_year) : '',
-      status: false,
+      badge: null,
     },
-    { label: '我的角色', value: item.role ?? '', status: false },
-    { label: '团队规模', value: item.team_size != null ? `${item.team_size} 人` : '', status: false },
-    { label: '开源协议', value: item.license ?? '', status: false },
+    { label: '我的角色', value: item.role ?? '', badge: null },
+    { label: '团队规模', value: item.team_size != null ? `${item.team_size} 人` : '', badge: null },
+    { label: '开源协议', value: item.license ?? '', badge: null },
   ].filter((row) => row.value !== '')
 })
 
@@ -114,7 +115,7 @@ const progressShape = computed(() => (detail.value?.progress === 'launched' ? 'c
 
 /** 指标统计格：最多 4 格，0 条时整块不渲染（稿上 4 格是上限，不是要求凑满）。 */
 const metricCells = computed(() =>
-  (detail.value?.metadata ?? []).filter((row) => row.kind === 'metric').slice(0, METRIC_MAX),
+  (detail.value?.metadata ?? []).filter((row) => row.kind === 'metric').slice(0, METRIC_LIMITS.max),
 )
 
 /**
@@ -321,11 +322,12 @@ onMounted(() => void load())
             <dl class="kv">
               <div v-for="row in fixedMeta" :key="row.label" class="kv-row">
                 <dt>{{ row.label }}</dt>
-                <dd v-if="row.status" class="kv-badges">
+                <dd v-if="row.badge === 'published'" class="kv-badges">
                   <AppBadge tone="published" shape="dot">已发布</AppBadge>
-                  <span class="kv-badge-sep" aria-hidden="true">·</span>
+                </dd>
+                <dd v-else-if="row.badge === 'progress'" class="kv-badges">
                   <AppBadge :tone="progressTone" :shape="progressShape">
-                    {{ PROGRESS_LABELS[detail.progress] }}
+                    {{ row.value }}
                   </AppBadge>
                 </dd>
                 <dd v-else>{{ row.value }}</dd>
@@ -694,9 +696,6 @@ onMounted(() => void load())
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-.kv-badge-sep {
-  color: var(--c-text-secondary);
 }
 .kv-row dt {
   color: var(--c-text-secondary);
