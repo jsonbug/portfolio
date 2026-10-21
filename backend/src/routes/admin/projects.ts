@@ -9,7 +9,7 @@
 //   PUT    /admin/projects/:id/screenshots 整体替换截图（≤10 张，url 必须 http(s)，sort 即顺序）
 // 契约见 docs/api-contract.md §4.1。
 import type { FastifyInstance } from "fastify";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { AppError } from "../../lib/errors.js";
 import { validate } from "../../lib/zod.js";
@@ -111,6 +111,21 @@ export async function adminProjectRoutes(app: FastifyInstance) {
       prisma.project.count({ where: { ...baseWhere, publish_status: "archived" } }),
     ]);
 
+    // note_count：本页项目的笔记数，**一次聚合查完**，不逐行查（避免 N+1）。
+    // 口径与分段计数不一样：它是「这个项目一共有几篇笔记」，与 search / publish_status 过滤无关；
+    // 笔记无软删（后台删除是硬删），所以也不需要排除已删——草稿 + 已发布一起数才是后台要的。
+    // 用 `$queryRaw` 而不是 `groupBy`：后者的 `_count` 返回类型在 TS 下是 `true | {…}` 联合，
+    // 取值要上游定义成可选字段才能过编译，反倒要写断言；这里显式声明行类型更干净。
+    const ids = rows.map((r) => r.id);
+    const noteRows = ids.length
+      ? await prisma.$queryRaw<Array<{ project_id: string; count: number }>>`
+          SELECT project_id, COUNT(*) AS count FROM notes
+          WHERE project_id IN (${Prisma.join(ids)})
+          GROUP BY project_id
+        `
+      : [];
+    const noteCountByProject = new Map(noteRows.map((n) => [n.project_id, Number(n.count)]));
+
     // 四项满足 all = draft + published + archived（publish_status 三值穷尽）
     const counts = {
       all: draftCount + publishedCount + archivedCount,
@@ -120,7 +135,7 @@ export async function adminProjectRoutes(app: FastifyInstance) {
     };
 
     return {
-      items: rows.map(toAdminListItem),
+      items: rows.map((r) => toAdminListItem(r, noteCountByProject.get(r.id) ?? 0)),
       page: q.page,
       pageSize: q.pageSize,
       total,

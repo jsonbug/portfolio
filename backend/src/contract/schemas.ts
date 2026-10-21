@@ -331,6 +331,9 @@ export const AdminProjectListItemSchema = ProjectListItemSchema.extend({
   publish_status: PublishStatusSchema,
   published_at: isoDatetime().nullable(),
   deleted_at: isoDatetime().nullable(),
+  // 该项目下**全部**笔记数（草稿 + 已发布）。笔记无软删（`DELETE /admin/notes` 是硬删），
+  // 无需排除已删；0 篇返回 0（不是 null）。前台列表不含此字段。
+  note_count: z.number().int().min(0),
 });
 export type AdminProjectListItem = z.infer<typeof AdminProjectListItemSchema>;
 

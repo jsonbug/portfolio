@@ -215,12 +215,18 @@ export function toPublicDetail(p: PublicProjectDetailRow): ProjectDetail {
 }
 
 // ---------- 后台管理（额外含曝光状态、发布时间、软删除） ----------
-export function toAdminListItem(p: ProjectListRow): AdminProjectListItem {
+/**
+ * 后台列表项。`note_count` 是该项目的**全部**笔记数（草稿 + 已发布）：后台视角要连草稿一起数，
+ * 前台不显示这个字段。笔记没有软删（`DELETE /admin/notes` 是硬删），所以不需要排除已删。
+ * 由调用方用一次 `groupBy(project_id)` 聚合后传进来，不在序列化里查库（避免 N+1）。
+ */
+export function toAdminListItem(p: ProjectListRow, noteCount: number): AdminProjectListItem {
   return {
     ...baseListItem(p),
     publish_status: p.publish_status as AdminProjectListItem["publish_status"],
     published_at: toIso(p.published_at),
     deleted_at: toIso(p.deleted_at),
+    note_count: noteCount,
   };
 }
 

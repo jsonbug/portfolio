@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
 import { prisma } from "../src/lib/prisma.js";
-import { auth, createProject, getToken, wipeDb } from "./helpers.js";
+import { auth, createNote, createProject, getToken, wipeDb } from "./helpers.js";
 
 let app: FastifyInstance;
 let token: string;
@@ -342,6 +342,37 @@ describe("GET /api/v1/admin/projects（后台列表）", () => {
     });
     expect(counts.json().counts.all).toBe(1);
     expect(counts.json().total).toBe(1);
+  });
+
+  it("列表项带 note_count：草稿 + 已发布一起数，0 篇返回 0 而不是 null", async () => {
+    const withNotes = await createProject(app, token, { name: "有笔记项目", publish_status: "published" });
+    await createNote(app, token, { project_id: withNotes.id, title: "已发布一", publish_status: "published" });
+    await createNote(app, token, { project_id: withNotes.id, title: "已发布二", publish_status: "published" });
+    await createNote(app, token, { project_id: withNotes.id, title: "草稿一" }); // 默认 draft
+    const noNotes = await createProject(app, token, { name: "无笔记项目", publish_status: "draft" });
+
+    const res = await app.inject({ method: "GET", url: "/api/v1/admin/projects", headers: auth(token) });
+    const byName = new Map((res.json().items as Array<{ name: string; note_count: number }>).map((i) => [i.name, i]));
+    expect(byName.get("有笔记项目")?.note_count).toBe(3);
+    expect(byName.get("无笔记项目")?.note_count).toBe(0);
+    expect(byName.get("无笔记项目")?.note_count).not.toBeNull();
+
+    // 口径：它是「这个项目一共有几篇笔记」，与列表的 search / publish_status 过滤无关（不是「命中了几篇」）
+    const filtered = await app.inject({
+      method: "GET",
+      url: "/api/v1/admin/projects?publish_status=published&search=有笔记",
+      headers: auth(token),
+    });
+    expect(filtered.json().items.map((i: { note_count: number }) => i.note_count)).toEqual([3]);
+
+    // 软删不改 note_count（includeDeleted 行为不变），笔记行仍在
+    await app.inject({ method: "DELETE", url: `/api/v1/admin/projects/${noNotes.id}`, headers: auth(token) });
+    const withDeleted = await app.inject({
+      method: "GET",
+      url: "/api/v1/admin/projects?includeDeleted=true&search=无笔记",
+      headers: auth(token),
+    });
+    expect(withDeleted.json().items.map((i: { note_count: number }) => i.note_count)).toEqual([0]);
   });
 
   it("后台列表项带 publish_status / published_at / deleted_at", async () => {
