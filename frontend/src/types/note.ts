@@ -11,6 +11,8 @@ export interface NoteSummary {
   id: string
   slug: string
   title: string
+  /** 正文摘要（后端从 body_md 去 Markdown 取前 120 字；空正文为 null）。契约 v1.2.3。 */
+  excerpt: string | null
   project: NoteProjectRef
   tags: string[]
   published_at: string | null

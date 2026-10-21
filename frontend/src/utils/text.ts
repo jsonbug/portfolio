@@ -46,3 +46,16 @@ export function readingTimeMinutes(text: string): number {
   if (units === 0) return 0
   return Math.max(1, Math.round(units / 300))
 }
+
+/** 搜索词上限：与契约的 `search` 参数上限一致（输入框 maxlength 与 URL 侧共用同一常量）。 */
+export const MAX_SEARCH_LENGTH = 200
+
+/**
+ * 搜索词收口：去首尾空白并截到 `MAX_SEARCH_LENGTH`。
+ *
+ * 输入框（`<input type="search">` 的 commit）与 URL query 解析都走这里，
+ * 避免「地址栏贴长串」和「输入框手打」得到两种长度。
+ */
+export function clampSearch(value: string | null | undefined): string {
+  return (value ?? '').trim().slice(0, MAX_SEARCH_LENGTH)
+}

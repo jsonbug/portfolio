@@ -26,3 +26,20 @@ describe('ProjectCover', () => {
     expect(container.querySelector('.cover--hero')).toBeTruthy()
   })
 })
+
+describe('ProjectCover 封面地址白名单', () => {
+  it('非 http(s) 的 cover_image_url 不产出 img（回落渐变）', () => {
+    render(ProjectCover, {
+      props: { name: '可疑封面', coverImage: 'javascript:alert(1)', variant: 'card' },
+    })
+    expect(document.querySelector('img')).toBeNull()
+    expect(screen.getByRole('img', { name: '可疑封面 封面' })).toBeInTheDocument()
+  })
+
+  it('http(s) 封面正常输出 img', () => {
+    render(ProjectCover, {
+      props: { name: '正常封面', coverImage: 'https://images.example.com/a.png', variant: 'card' },
+    })
+    expect(document.querySelector('img')?.getAttribute('src')).toBe('https://images.example.com/a.png')
+  })
+})

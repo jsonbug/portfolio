@@ -1,7 +1,7 @@
-import { render, screen, within } from '@testing-library/vue'
+import { render, screen, waitFor, within } from '@testing-library/vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { handleMockRequest, resetMockDb } from '@/mocks/handlers'
+import { getMockDb, handleMockRequest, resetMockDb } from '@/mocks/handlers'
 import ProjectDetailView from './ProjectDetailView.vue'
 
 function renderDetail(slug: string) {
@@ -10,10 +10,11 @@ function renderDetail(slug: string) {
     routes: [
       { path: '/', name: 'home', component: { template: '<div>home</div>' } },
       { path: '/projects/:slug', name: 'project-detail', component: ProjectDetailView, props: true },
+      { path: '/notes', name: 'notes', component: { template: '<div>notes</div>' } },
       { path: '/notes/:slug', name: 'note-detail', component: { template: '<div>note</div>' } },
     ],
   })
-  return render(ProjectDetailView, { props: { slug }, global: { plugins: [router] } })
+  return { router, ...render(ProjectDetailView, { props: { slug }, global: { plugins: [router] } }) }
 }
 
 const admin = (method: string, path: string, body?: unknown) =>
@@ -41,7 +42,8 @@ describe('ProjectDetailView', () => {
 
     expect(await screen.findByRole('heading', { level: 1, name: '项目展示平台' })).toBeInTheDocument()
     expect(screen.getByText('把散落在收藏夹里的项目收进一个可检索、可记笔记的展示站。')).toBeInTheDocument()
-    expect(screen.getByText('进行中')).toBeInTheDocument()
+    // 进展徽标 + 元数据「进展」行都会出现「进行中」，这里只锚头部徽标
+    expect(document.querySelector('.title-row .badge-text')?.textContent?.trim()).toBe('进行中')
     expect(screen.getByText('★ 128')).toBeInTheDocument()
     expect(screen.getByText('1.4.0')).toBeInTheDocument()
     expect(screen.getByText(/\d{4}-\d{2}-\d{2} 更新/)).toBeInTheDocument()
@@ -55,14 +57,115 @@ describe('ProjectDetailView', () => {
     expect(within(aside).getByRole('heading', { name: '相关链接' })).toBeInTheDocument()
     expect(within(aside).getByRole('heading', { name: '技术栈' })).toBeInTheDocument()
 
-    // 固定列
+    // 固定列：发布状态 + 进展 + 4 列（效果图的 6 行）
+    expect(within(aside).getByText('发布状态')).toBeInTheDocument()
+    expect(within(aside).getByText('进展')).toBeInTheDocument()
     expect(within(aside).getByText('前端负责人')).toBeInTheDocument()
     expect(within(aside).getByText('MIT')).toBeInTheDocument()
+    expect(within(aside).getByText('2024')).toBeInTheDocument()
+    expect(within(aside).getByText('2 人')).toBeInTheDocument()
     // 自定义 KV
     expect(within(aside).getByText('代码行数')).toBeInTheDocument()
     expect(within(aside).getByText('18k')).toBeInTheDocument()
     // 技术栈
     expect(within(aside).getByText('Vue 3')).toBeInTheDocument()
+  })
+
+  it('头部三个主操作：源码仓库 / 访问官网 / 查看笔记（与右栏清单并存）', async () => {
+    renderDetail('portfolio-platform')
+    await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
+
+    expect(screen.getByRole('link', { name: '源码仓库 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
+      'href',
+      'https://github.com/jsonbug/portfolio',
+    )
+    expect(screen.getByRole('link', { name: '访问官网 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
+      'href',
+      'https://portfolio.example.com',
+    )
+    // 查看笔记是页内锚点，落在右栏之外的「相关笔记」区
+    const notesAction = screen.getByRole('link', { name: /查看笔记 · 项目展示平台/ })
+    expect(notesAction).toHaveAttribute('href', '#related-notes')
+    expect(document.getElementById('related-notes')).not.toBeNull()
+  })
+
+  it('相关笔记：日期 / 标题 / 摘要 / 标签 + 「全部笔记」入口', async () => {
+    renderDetail('portfolio-platform')
+    const section = (await screen.findByRole('heading', { name: '相关笔记' })).closest('section') as HTMLElement
+
+    expect(within(section).getByRole('link', { name: 'v1.2 改造笔记' })).toBeInTheDocument()
+    // excerpt 来自契约 v1.2.3 的 NoteSummary.excerpt
+    expect(within(section).getByText(/曝光状态与进展拆成两个字段/)).toBeInTheDocument()
+    expect(within(section).getByRole('link', { name: /全部笔记/ })).toHaveAttribute('href', '/notes')
+  })
+
+  it('F9：链接检查 failed 才降级（低对比 + 失效图标 + 说明），仍可点', async () => {
+    renderDetail('chart-kit')
+    const aside = await screen.findByRole('complementary', { name: '项目速览' })
+    const failed = within(aside).getByRole('link', { name: /^文档 · Chart Kit（新窗口打开），链接检查失败/ })
+
+    expect(failed).toHaveClass('link-anchor--failed')
+    expect(failed).toHaveAttribute('href', 'https://chart.example.com/docs')
+    expect(failed).toHaveAttribute('title', '链接检查失败（HTTP 502），仍可尝试打开')
+    expect(failed).toHaveTextContent('⚠')
+
+    // 同页另一条 ok 链接不降级
+    const ok = within(aside).getAllByRole('link').find((el) => !el.className.includes('failed'))
+    expect(ok).toBeTruthy()
+    expect(ok).not.toHaveClass('link-anchor--failed')
+  })
+
+  it('F9：unknown（从未检查）与 null 一律不降级', async () => {
+    // 新建项目的链接 last_status 为 unknown
+    const created = admin('POST', '/admin/projects', {
+      slug: 'unknown-link-project',
+      name: '未知状态项目',
+      publish_status: 'published',
+    })
+    const { id } = (await created.json()) as { id: string }
+    const added = admin('POST', `/admin/projects/${id}/links`, {
+      type: 'repo',
+      label: '代码',
+      url: 'https://github.com/jsonbug/never-checked',
+    })
+    const link = (await added.json()) as { last_status: string | null }
+    expect(link.last_status === 'unknown' || link.last_status === null).toBe(true)
+
+    renderDetail('unknown-link-project')
+    const aside = await screen.findByRole('complementary', { name: '项目速览' })
+    const repo = within(aside).getByRole('link', { name: '仓库 · 未知状态项目（新窗口打开）' })
+    expect(repo).not.toHaveClass('link-anchor--failed')
+    expect(repo).not.toHaveTextContent('⚠')
+    expect(repo).not.toHaveAttribute('title')
+  })
+
+  it('非 http(s) 链接降级为纯文本（不再输出可点的 a）', async () => {
+    const created = admin('POST', '/admin/projects', {
+      slug: 'odd-link-project',
+      name: '怪链接项目',
+      publish_status: 'published',
+    })
+    const { id } = (await created.json()) as { id: string }
+    // 绕过 API 校验，直接把库里链接改成非法地址（模拟历史脏数据）
+    const link = (await (await admin('POST', `/admin/projects/${id}/links`, {
+      type: 'repo',
+      label: '代码',
+      url: 'https://github.com/jsonbug/odd',
+    })).json()) as { id: string }
+    const db = getMockDb()
+    const row = db.links.find((l) => l.id === link.id)
+    if (row) row.url = 'javascript:alert(1)'
+
+    renderDetail('odd-link-project')
+    const aside = await screen.findByRole('complementary', { name: '项目速览' })
+    expect(within(aside).getByText('链接地址不合法，已停用')).toBeInTheDocument()
+    expect(within(aside).queryByRole('link', { name: /仓库/ })).not.toBeInTheDocument()
+  })
+
+  it('旧 slug 301 后把地址栏收敛到规范 slug（别让人分享旧地址）', async () => {
+    const { router } = renderDetail('multica-demo')
+    await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
+    await waitFor(() => expect(router.currentRoute.value.params.slug).toBe('portfolio-platform'))
   })
 
   it('相关链接：类型文案 + 裸域名 + 新窗口 rel', async () => {
@@ -103,12 +206,19 @@ describe('ProjectDetailView', () => {
     expect(repoLink).toHaveTextContent('github.com')
   })
 
-  it('三 panel 全空时整段 aside 与相关笔记都不渲染', async () => {
+  it('项目什么都没有时：侧栏只剩两行状态元数据，空 panel 不渲染', async () => {
     await seedBareProject()
     renderDetail('bare-project')
 
     expect(await screen.findByRole('heading', { level: 1, name: '极简项目' })).toBeInTheDocument()
-    expect(screen.queryByRole('complementary', { name: '项目速览' })).not.toBeInTheDocument()
+    const aside = screen.getByRole('complementary', { name: '项目速览' })
+    // 发布状态 / 进展 恒有，所以元数据 panel 一定在；其余两 panel 与空固定列不渲染
+    expect(within(aside).getByRole('heading', { name: '元数据' })).toBeInTheDocument()
+    expect(within(aside).getByText('发布状态')).toBeInTheDocument()
+    expect(within(aside).getByText('进展')).toBeInTheDocument()
+    expect(within(aside).queryByText('角色')).not.toBeInTheDocument()
+    expect(within(aside).queryByRole('heading', { name: '相关链接' })).not.toBeInTheDocument()
+    expect(within(aside).queryByRole('heading', { name: '技术栈' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '相关笔记' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '项目介绍' })).not.toBeInTheDocument()
   })

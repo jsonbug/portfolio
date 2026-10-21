@@ -34,6 +34,7 @@ import type {
   ProjectSort,
   PublishStatus,
 } from '@/types'
+import { MAX_SEARCH_LENGTH } from '@/utils/text'
 
 const DAY = 86_400_000
 const iso = (ms: number): string => new Date(ms).toISOString()
@@ -451,12 +452,32 @@ export function toProjectListItem(state: DbState, p: DbProject): ProjectListItem
   }
 }
 
+/**
+ * 笔记摘要（契约 v1.2.3）：去 Markdown 标记后取前 120 字，超长补省略号，空正文为 null。
+ * 后端同口径实现，联调时逐字比对。
+ */
+export function excerptOf(bodyMd: string | null | undefined): string | null {
+  if (!bodyMd) return null
+  const plain = bodyMd
+    .replace(/```[\s\S]*?```/g, ' ') // 代码块
+    .replace(/`([^`]*)`/g, '$1') // 行内代码
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ') // 图片
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // 链接保文字
+    .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+\.)\s+/gm, ' ') // 标题/引用/列表标记
+    .replace(/[*_~]/g, '') // 强调
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!plain) return null
+  return plain.length > 120 ? `${plain.slice(0, 120)}…` : plain
+}
+
 export function toNoteSummary(state: DbState, n: DbNote): NoteSummary {
   const project = state.projects.find((p) => p.id === n.project_id)
   return {
     id: n.id,
     slug: n.slug,
     title: n.title,
+    excerpt: excerptOf(n.body_md),
     project: { slug: project?.slug ?? '', name: project?.name ?? '' },
     tags: [...n.tags],
     published_at: n.published_at,
@@ -557,7 +578,8 @@ export function toAdminNoteDetail(state: DbState, n: DbNote): AdminNoteDetail {
 // ---------------------------------------------------------------- 查询
 
 function matches(haystacks: Array<string | null | undefined>, search: string): boolean {
-  const q = search.trim().toLowerCase()
+  // 与前端 clampSearch 同口径：search 参数上限 200 字（契约 v1.2）。
+  const q = search.trim().slice(0, MAX_SEARCH_LENGTH).toLowerCase()
   if (!q) return true
   return haystacks.some((h) => !!h && h.toLowerCase().includes(q))
 }
@@ -899,9 +921,16 @@ export function addLink(
 }
 
 /** 模拟 `POST /admin/links/:id/check`：mock 里一律判成功（真实检查与 SSRF 防护在后端）。 */
+/**
+ * 同步重检一条链接（mock 版）。
+ *
+ * 真实后端是发一次 HEAD；mock 用 URL 里的标记决定结果，保证 `failed` 路径可测：
+ * URL 命中 /fail|broken|dead/i 判失败（502），其余判成功（200）。
+ */
 export function checkLinkNow(state: DbState, link: DbLink): DbLink {
-  link.last_status = 'ok'
-  link.last_http_status = 200
+  const failing = /fail|broken|dead/i.test(link.url)
+  link.last_status = failing ? 'failed' : 'ok'
+  link.last_http_status = failing ? 502 : 200
   link.last_checked_at = iso(state.now)
   return link
 }

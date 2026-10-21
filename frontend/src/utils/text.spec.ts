@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { daysAgo, formatDate, readingTimeMinutes, truncate } from './text'
+import { MAX_SEARCH_LENGTH, clampSearch, daysAgo, formatDate, readingTimeMinutes, truncate } from './text'
 
 describe('truncate', () => {
   it('原样返回不超过最大长度的文本', () => {
@@ -58,5 +58,18 @@ describe('readingTimeMinutes', () => {
 
   it('中英混排都计入', () => {
     expect(readingTimeMinutes(`${'字'.repeat(150)} ${'word '.repeat(150)}`)).toBe(1)
+  })
+})
+
+describe('clampSearch', () => {
+  it('去首尾空白并截到 200 字（输入框与 URL 共用同一上限）', () => {
+    expect(clampSearch('  图表  ')).toBe('图表')
+    expect(clampSearch('a'.repeat(300))).toHaveLength(MAX_SEARCH_LENGTH)
+    expect(MAX_SEARCH_LENGTH).toBe(200)
+  })
+
+  it('null / undefined 归一为空串', () => {
+    expect(clampSearch(null)).toBe('')
+    expect(clampSearch(undefined)).toBe('')
   })
 })

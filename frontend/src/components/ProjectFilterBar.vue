@@ -8,6 +8,7 @@ import {
   type ProjectListFilters,
 } from '@/composables/useProjectListFilters'
 import { debounce } from '@/utils/timing'
+import { MAX_SEARCH_LENGTH, clampSearch } from '@/utils/text'
 import type { ProjectSort, ProjectListCounts, Progress } from '@/types'
 
 /**
@@ -56,7 +57,7 @@ onBeforeUnmount(() => commitSearch.cancel())
 
 function submitSearch(): void {
   commitSearch.cancel()
-  emit('search', searchText.value)
+  emit('search', clampSearch(searchText.value))
 }
 
 function countOf(segment: Progress | null): number {
@@ -103,7 +104,7 @@ function clearAll(): void {
           v-model="searchText"
           class="input search-input"
           type="search"
-          maxlength="200"
+          :maxlength="MAX_SEARCH_LENGTH"
           aria-label="搜索项目"
           placeholder="搜索项目名称或简介"
         />
