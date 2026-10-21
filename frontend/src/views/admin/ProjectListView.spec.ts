@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AUTH_TOKEN_KEY } from '@/api/client'
+import * as projectsApi from '@/api/projects'
 import { resetMockDb } from '@/mocks'
 import ProjectListView from './ProjectListView.vue'
 
@@ -362,5 +363,118 @@ describe('ProjectListView', () => {
     expect(
       within(panel).getByText('前台不可见；数据与笔记保留，旧链接仍 301。'),
     ).toBeInTheDocument()
+  })
+
+  it('批量归档部分失败：逐条累计，文案列出失败项名称，成功项照常归档', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    // 只让「抓取工具箱」这条 PATCH 失败，其余照常走 mock
+    const realUpdate = projectsApi.updateProject
+    const updateSpy = vi
+      .spyOn(projectsApi, 'updateProject')
+      .mockImplementation(async (id, patch) => {
+        if (id === 'proj_crawler') throw new Error('炸了')
+        return realUpdate(id, patch)
+      })
+
+    renderList()
+    await screen.findByText('项目展示平台')
+    await fireEvent.click(screen.getByRole('checkbox', { name: '选择 项目展示平台' }))
+    await fireEvent.click(screen.getByRole('checkbox', { name: '选择 抓取工具箱' }))
+    await fireEvent.click(screen.getByRole('button', { name: '批量归档' }))
+
+    // 两条都发过请求（失败没有让循环提前结束）
+    await waitFor(() => expect(updateSpy).toHaveBeenCalledTimes(2))
+
+    // 成功的一行确实变了
+    const archivedRow = await findRow('项目展示平台')
+    expect(within(archivedRow).getByText('已归档')).toBeInTheDocument()
+    // 结论文案同时给出成功数与失败项名称
+    const notice = await screen.findByRole('status')
+    expect(notice).toHaveTextContent('已归档 1 条，失败 1 条：抓取工具箱')
+    // 失败项留在选择里，方便只重试它
+    expect(screen.getByText('已选 1 项')).toBeInTheDocument()
+  })
+
+  it('批量归档跳过已归档项：不发请求，文案注明跳过条数', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const updateSpy = vi.spyOn(projectsApi, 'updateProject')
+
+    renderList()
+    await screen.findByText('旧博客')
+    // 旧博客种子就是 archived，勾它 + 一个已发布项
+    await fireEvent.click(screen.getByRole('checkbox', { name: '选择 旧博客' }))
+    await fireEvent.click(screen.getByRole('checkbox', { name: '选择 项目展示平台' }))
+    await fireEvent.click(screen.getByRole('button', { name: '批量归档' }))
+
+    await waitFor(() => expect(screen.getByText(/已归档 1 条（已跳过 1 条已归档项）/)).toBeInTheDocument())
+    // 只对真正需要归档的那一条发了 PATCH
+    expect(updateSpy).toHaveBeenCalledTimes(1)
+    expect(updateSpy.mock.calls[0][0]).toBe('proj_portfolio')
+  })
+
+  async function seedProjects(count: number) {
+    for (let i = 0; i < count; i += 1) {
+      await projectsApi.createProject({
+        slug: `bulk-${i}`,
+        name: `批量项目 ${i}`,
+        publish_status: 'published',
+      })
+    }
+  }
+
+  it('末页被删空时自动回落到上一页（page 与分页控件不再自相矛盾）', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    // 种子已发布 4 个 + 17 个 = 21 条已发布，每页 20 → 「已发布」第 2 页只有 1 行
+    await projectsApi.createProject({ slug: 'bulk-x', name: '批量项目 x', publish_status: 'published' })
+    await seedProjects(16)
+    renderList()
+    await screen.findByText('项目展示平台')
+
+    await fireEvent.click(screen.getByRole('button', { name: /^已发布 \d+$/ }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '第 2 页，共 2 页' })).toBeInTheDocument()
+    })
+    await fireEvent.click(screen.getByRole('button', { name: '第 2 页，共 2 页' }))
+
+    // 第 2 页唯一那行归档 → 它离开「已发布」过滤，该页变空
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '第 2 页，共 2 页' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      )
+    })
+    await fireEvent.click(screen.getByRole('checkbox', { name: /^选择 / }))
+    await fireEvent.click(screen.getByRole('button', { name: '批量归档' }))
+
+    // 回落：页码被拉回最后一页，且那一页有内容
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '第 1 页，共 1 页' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      )
+    })
+    expect(within(await findRow('项目展示平台')).getByText('项目展示平台')).toBeInTheDocument()
+  })
+
+  it('同值点击分段 = 回到第 1 页并重拉（早退会让这两个手势失效）', async () => {
+    await seedProjects(15)
+    renderList()
+    await screen.findByText('项目展示平台')
+    await fireEvent.click(screen.getByRole('button', { name: '第 2 页，共 2 页' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '第 2 页，共 2 页' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      )
+    })
+
+    // 点「全部」——与当前分段同值
+    await fireEvent.click(screen.getByRole('button', { name: /^全部 \d+$/ }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '第 1 页，共 2 页' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      )
+    })
   })
 })
