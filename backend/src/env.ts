@@ -1,7 +1,14 @@
 // 环境变量加载：用 Node 内置 loadEnvFile，零第三方依赖（Node ≥ 20.12）
 // 注意：loadEnvFile 不会覆盖 process.env 中已存在的变量（测试可在导入前预设）。
 import { loadEnvFile } from "node:process";
-import { checkSecrets, formatIssues } from "./lib/env-check.js";
+import {
+  ALLOW_WEAK_SECRET_ENV,
+  checkSecrets,
+  formatIssues,
+  formatIssuesWarning,
+  resolveSecretPolicy,
+  type EnvIssue,
+} from "./lib/env-check.js";
 
 try {
   loadEnvFile();
@@ -47,11 +54,22 @@ export const env = {
 };
 
 // 启动期校验：配置缺失由 required() 兜，配置填坏（短密钥、被插值吃掉的口令摘要）在这里兜。
-// 宁可起不来，也不要带着会一直 401 的配置对外服务。
-const issues = checkSecrets(
+// 生产环境宁可起不来，也不要带着会一直 401 的配置对外服务；
+// 非生产只告警（把 CI / 本地开发一起打死，等于逼人关掉校验）。
+const configIssues = checkSecrets(
   { authSecret: env.authSecret, adminPasswordHash: env.adminPasswordHash, authTtlSeconds: env.authTtlSeconds },
   env.nodeEnv,
 );
-if (issues.length > 0) {
-  throw new Error(formatIssues(issues));
+const allowWeakSecret = process.env[ALLOW_WEAK_SECRET_ENV] === "1";
+const secretPolicy = resolveSecretPolicy(configIssues.length, env.nodeEnv, allowWeakSecret);
+
+if (secretPolicy === "throw") {
+  throw new Error(formatIssues(configIssues));
 }
+if (secretPolicy === "warn") {
+  // 逃逸开关必须留痕：不打日志的开关等于没有
+  console.warn(formatIssuesWarning(configIssues, env.nodeEnv, allowWeakSecret));
+}
+
+/** 配置校验未通过的项（登录接口据此附一句可读提示，见 routes/auth.ts） */
+export const configWarnings: EnvIssue[] = secretPolicy === "warn" ? configIssues : [];

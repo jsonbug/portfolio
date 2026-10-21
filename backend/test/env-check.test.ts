@@ -1,6 +1,14 @@
 // 启动期配置校验：坏配置必须在启动时失败，而不是表现为「登录永远 401」。
 import { describe, expect, it } from "vitest";
-import { DEV_PLACEHOLDER_SECRET, checkSecrets, formatIssues } from "../src/lib/env-check.js";
+import {
+  ALLOW_WEAK_SECRET_ENV,
+  DEV_PLACEHOLDER_SECRET,
+  checkSecrets,
+  formatIssues,
+  formatIssuesWarning,
+  loginConfigHint,
+  resolveSecretPolicy,
+} from "../src/lib/env-check.js";
 
 const GOOD_HASH =
   "scrypt$0c018e1a47e4503e5f8b52c79cb7f7f9$6286fb06632109c6e98a2f5e2b3799290883f88ae4a17db8c35a6606a8e2fdb6dc330f7631437a77660a1a9fcf63993f54d55d5c6391f5919f17cdb8767198db";
@@ -70,5 +78,46 @@ describe("checkSecrets", () => {
     expect(text).toContain("AUTH_SECRET");
     expect(text).toContain("ADMIN_PASSWORD_HASH");
     expect(text).toContain("openssl rand -base64 48");
+  });
+});
+
+describe("resolveSecretPolicy：同一套校验，不同环境不同后果", () => {
+  const issue = [{ name: "AUTH_SECRET", problem: "太短", hint: "openssl rand -base64 48" }];
+
+  it("生产 + 有问题 + 无逃逸开关 → 拒绝启动", () => {
+    expect(resolveSecretPolicy(1, "production", false)).toBe("throw");
+  });
+
+  it("生产 + 显式 ALLOW_WEAK_SECRET=1 → 降级为 warn（开关必须留痕）", () => {
+    expect(resolveSecretPolicy(1, "production", true)).toBe("warn");
+  });
+
+  it("非生产（development / test）→ warn，不打死本地开发与 CI", () => {
+    expect(resolveSecretPolicy(1, "development", false)).toBe("warn");
+    expect(resolveSecretPolicy(1, "test", false)).toBe("warn");
+  });
+
+  it("没有问题 → ok（任何环境）", () => {
+    for (const env of ["production", "development", "test"]) {
+      expect(resolveSecretPolicy(0, env, false)).toBe("ok");
+    }
+  });
+
+  it("告警文案含逐项原因与「生产会拒绝启动」提示", () => {
+    const text = formatIssuesWarning(issue, "development");
+    expect(text).toContain("不阻止启动");
+    expect(text).toContain("AUTH_SECRET");
+    expect(text).toContain("生产环境");
+    const prod = formatIssuesWarning(issue, "production", true);
+    expect(prod).toContain(ALLOW_WEAK_SECRET_ENV);
+    expect(prod).toContain("放行");
+  });
+
+  it("登录接口的附加提示：只在配置有问题时给，且点名是哪几个变量", () => {
+    expect(loginConfigHint([])).toBeNull();
+    const hint = loginConfigHint(issue.concat([{ name: "ADMIN_PASSWORD_HASH", problem: "格式错", hint: "重新生成" }]));
+    expect(hint).toContain("AUTH_SECRET");
+    expect(hint).toContain("ADMIN_PASSWORD_HASH");
+    expect(hint).toContain("启动日志");
   });
 });

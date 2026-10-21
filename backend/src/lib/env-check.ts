@@ -76,3 +76,47 @@ export function formatIssues(issues: EnvIssue[]): string {
   const lines = issues.map((i) => `  · ${i.name}：${i.problem}；处理：${i.hint}`);
   return `[env] 生产配置校验失败，拒绝启动：\n${lines.join("\n")}`;
 }
+
+// ---------- 环境相关的处理策略 ----------
+
+/** 显式逃逸开关（生产环境用）：`ALLOW_WEAK_SECRET=1` 时降级为 WARN，但仍会打日志 */
+export const ALLOW_WEAK_SECRET_ENV = "ALLOW_WEAK_SECRET";
+
+export type SecretPolicy = "ok" | "warn" | "throw";
+
+/**
+ * 同一套校验在不同环境下后果不同：
+ * - `production`：配置有问题 = 必然「登录永远 401」或弱签名密钥 → 硬拒启动。
+ *   唯一例外是显式给了 `ALLOW_WEAK_SECRET=1`（应急/临时环境），降级为 WARN 且必须打日志；
+ * - 非生产（test / development）：只 WARN。CI 与本地开发用的都是短密钥/测试口令，
+ *   一起打死的结果是「下一个人把校验关掉」，反而回到静默失败。
+ */
+export function resolveSecretPolicy(
+  issueCount: number,
+  nodeEnv: string,
+  allowWeakSecret: boolean,
+): SecretPolicy {
+  if (issueCount === 0) return "ok";
+  if (nodeEnv !== "production") return "warn";
+  return allowWeakSecret ? "warn" : "throw";
+}
+
+/** 非生产 / 逃逸开关下的启动告警（比错误信息多一句「本次不阻止启动」） */
+export function formatIssuesWarning(issues: EnvIssue[], nodeEnv: string, allowedByOverride = false): string {
+  const lines = issues.map((i) => `  · ${i.name}：${i.problem}；处理：${i.hint}`);
+  const head = allowedByOverride
+    ? `[env] 配置校验未通过，但 ${ALLOW_WEAK_SECRET_ENV}=1 已显式放行（生产环境请尽快修复）：`
+    : `[env] 配置校验未通过（NODE_ENV=${nodeEnv}，不阻止启动）：`;
+  const tail = nodeEnv === "production" ? "" : "\n  生产环境（NODE_ENV=production）下同样的配置会直接拒绝启动。";
+  return `${head}\n${lines.join("\n")}${tail}`;
+}
+
+/**
+ * 登录失败时附在 message 后的可读提示：只在配置确实有问题时给。
+ * 不给的话，「口令摘要被 compose 插值吃掉」表现为「用户名或密码错了几十遍」，
+ * 是这套系统里最难自查的故障。
+ */
+export function loginConfigHint(issues: EnvIssue[]): string | null {
+  if (issues.length === 0) return null;
+  return `（服务端配置校验未通过：${issues.map((i) => i.name).join("、")}，登录可能始终失败；见启动日志）`;
+}

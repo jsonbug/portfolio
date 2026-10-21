@@ -98,8 +98,19 @@ jobs:
           p.write_text('\n'.join(out) + '\n')
           PY
 
-      - name: 打印版本（compose 需 2.30+ 才支持 env_file 的 format raw）
-        run: docker version --format '{{.Server.Version}}' && docker compose version
+      - name: 检查 compose 版本（< 2.30 直接红，不假绿）
+        run: |
+          set -euo pipefail
+          docker version --format 'server {{.Server.Version}}'
+          ver=$(docker compose version --short 2>/dev/null || docker compose version | head -1)
+          ver=$(printf '%s' "$ver" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+          echo "docker compose $ver"
+          major=${ver%%.*}; rest=${ver#*.}; minor=${rest%%.*}
+          if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 30 ]; }; then
+            echo "::error::docker compose $ver < 2.30：env_file 的 format: raw 不支持，冒烟跑不起来。"
+            echo "::error::跳过会让这项检查变成假绿（比没有检查更危险），因此直接判失败。升级 runner 上的 compose 或调整该 job。"
+            exit 1
+          fi
 
       - name: 构建镜像
         run: docker compose build

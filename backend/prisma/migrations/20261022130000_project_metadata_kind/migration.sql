@@ -1,0 +1,23 @@
+-- project_metadata 加列 kind（'meta' | 'metric'，默认 'meta'）
+--
+-- 为什么单独一个迁移文件：SQLite 的 ALTER TABLE ADD COLUMN 没有 IF NOT EXISTS，
+-- 也不能与后面的建表语句共用事务（迁移文件在 SQLite 下不是原子执行的）。
+-- 拆成「一条语句一个迁移」后，任一失败都只影响自己：已应用的不回滚、未应用的干净重跑。
+-- 既有 KV 全部按 meta 渲染 → 零回填（DEFAULT 自动填旧行）。
+--
+-- 回滚（执行前先备份 db 文件）：
+--   cp data/prod.db data/prod.db.bak-$(date +%Y%m%d%H%M%S)
+--   ALTER TABLE "project_metadata" DROP COLUMN "kind";   -- SQLite 3.35+
+--   npx prisma migrate resolve --rolled-back 20261022130000_project_metadata_kind
+--
+-- 迁移失败后的恢复（演练见 ALICE 交付记录）：
+--   1) 恢复备份：cp data/prod.db.bak-<时间戳> data/prod.db（并删掉 -wal / -shm）
+--   2) npx prisma migrate resolve --rolled-back <失败的那个迁移名>
+--   3) npx prisma migrate status 确认回到 "not yet been applied"
+--   4) 修正失败原因（磁盘/权限/手工改过表结构）后重跑 npx prisma migrate deploy
+--   ⚠️ 本迁移若在执行到一半时被杀（进程被 kill），列可能已加上但记录未写：
+--      此时 resolve --rolled-back 后重跑会报 duplicate column name，
+--      唯一可靠路径是第 1 步的备份恢复（或手工 DROP COLUMN 回到迁移前）——
+--      不要手工补列再 resolve，那会让 _prisma_migrations 与实际结构不一致。
+
+ALTER TABLE "project_metadata" ADD COLUMN "kind" TEXT NOT NULL DEFAULT 'meta';
