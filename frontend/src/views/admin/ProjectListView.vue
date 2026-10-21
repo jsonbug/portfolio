@@ -54,6 +54,8 @@ const page = ref(1)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
 const loading = ref(false)
 const error = ref('')
+/** 批量操作的结论文案（成功也要说话，否则用户不知道跳过的那些为什么没变）。 */
+const batchNotice = ref('')
 const search = ref('')
 /** 分段：全部 / 已发布 / 草稿 / 已归档（无「已删除」，软删项目在「全部」里带徽标）。 */
 const segment = ref<PublishStatus | ''>('')
@@ -83,7 +85,14 @@ function toggleSelectAll() {
   selected.value = allSelected.value ? new Set() : new Set(items.value.map((item) => item.id))
 }
 
-async function load() {
+/**
+ * 拉当前页。
+ *
+ * `allowFallback` 只对**自动回落**再放行一次：末页被删空（或手改 URL 到越界页）时，
+ * 把页码拉回 `totalPages` 再取一次，避免出现「page=6、列表空、却没有分页控件」的不一致；
+ * 回落一次仍空就照常显示空态，不做第二次递归。
+ */
+async function load(allowFallback = true): Promise<void> {
   loading.value = true
   error.value = ''
   try {
@@ -97,6 +106,14 @@ async function load() {
     items.value = res.items
     counts.value = res.counts
     total.value = res.total
+
+    if (allowFallback && res.items.length === 0 && page.value > 1) {
+      const fallback = Math.max(1, totalPages.value)
+      if (fallback !== page.value) {
+        page.value = fallback
+        await load(false)
+      }
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -104,8 +121,13 @@ async function load() {
   }
 }
 
+/**
+ * 分段切换。
+ *
+ * 同值点击**不是**空操作：它是「重新看第一页」的手势（在第 3 页点当前分段 = 回第 1 页），
+ * 也是手动刷新入口。早退会让这两件事都失效。
+ */
 function pickSegment(value: PublishStatus | '') {
-  if (segment.value === value) return
   segment.value = value
   page.value = 1
   void load()
@@ -132,20 +154,61 @@ async function runAction(fn: () => Promise<unknown>) {
   }
 }
 
-/** 批量归档：逐个 PATCH（契约无批量端点），失败即停并保留选择。 */
+/**
+ * 批量归档：逐个 PATCH（契约无批量端点），**逐条累计**成败，不因一条失败就丢弃前面已成功的。
+ *
+ * 已归档项跳过以省请求——不是「已归档不能再归档」：后端对 `archived → archived` 返 200 幂等，
+ * 跳过只是让 N 次点击不发出 N 个无意义的 PATCH。
+ */
 async function archiveSelected() {
   if (!selectedCount.value) return
   if (!window.confirm(`确定归档选中的 ${selectedCount.value} 个项目？归档后前台不可见。`)) return
   error.value = ''
-  try {
-    for (const id of selected.value) {
-      await updateProject(id, { publish_status: 'archived' })
+  batchNotice.value = ''
+
+  const targets = items.value.filter((item) => selected.value.has(item.id))
+  const skipped = targets.filter((item) => item.publish_status === 'archived')
+  const toArchive = targets.filter((item) => item.publish_status !== 'archived')
+
+  const failed: AdminProjectListItem[] = []
+  let archived = 0
+  for (const item of toArchive) {
+    try {
+      await updateProject(item.id, { publish_status: 'archived' })
+      archived += 1
+    } catch {
+      // 单条失败不中断：把失败的挑出来一次性告知，成功的照常计数
+      failed.push(item)
     }
-    selected.value = new Set()
-    await load()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '批量归档失败'
   }
+
+  // 成功归档的行从选择里摘掉；失败与跳过的保留，用户可以只对它们重试
+  const nextSelected = new Set(selected.value)
+  for (const item of toArchive) {
+    if (!failed.includes(item)) nextSelected.delete(item.id)
+  }
+  selected.value = nextSelected
+
+  batchNotice.value = archiveNotice(archived, failed, skipped)
+  // 失败不写进 `error`：`load()` 开头会清 error，批次结论统一放 batchNotice，
+  // 用户点一次「批量归档」只该看到一条结论，而不是两条措辞不同的消息。
+  await load()
+}
+
+/** 批量归档的结果文案（全成功 / 有失败 / 有跳过）。 */
+function archiveNotice(
+  archived: number,
+  failed: AdminProjectListItem[],
+  skipped: AdminProjectListItem[],
+): string {
+  const parts: string[] = []
+  if (failed.length) {
+    parts.push(`已归档 ${archived} 条，失败 ${failed.length} 条：${failed.map((item) => item.name).join('、')}`)
+  } else {
+    parts.push(`已归档 ${archived} 条`)
+  }
+  if (skipped.length) parts.push(`（已跳过 ${skipped.length} 条已归档项）`)
+  return parts.join('')
 }
 
 /** 导出当前列表为 JSON（前端导出，无后端端点）。 */
@@ -267,6 +330,7 @@ onMounted(() => void load())
     </div>
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
+    <p v-if="batchNotice" class="batch-notice" role="status">{{ batchNotice }}</p>
     <p v-if="loading" class="hint">加载中…</p>
     <p v-else-if="!items.length" class="hint">暂无项目。</p>
 
@@ -569,6 +633,14 @@ onMounted(() => void load())
   margin: 0;
   padding: 8px 12px;
   color: var(--c-danger);
+  background: var(--c-fill);
+  border-radius: var(--r-control);
+}
+.batch-notice {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: var(--fs-small);
+  color: var(--c-success);
   background: var(--c-fill);
   border-radius: var(--r-control);
 }
