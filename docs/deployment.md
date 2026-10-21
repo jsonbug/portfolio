@@ -218,6 +218,10 @@ ADMIN_PASSWORD='你的强口令' node scripts/smoke-compose.mjs --public      # 
 
 它只读 `--base` 指向的入口、只用标准库 fetch，不接外网（除 `--public`）。CI 的 `compose` job 会跑同一份脚本。
 
+> 先确认你访问的确实是这套容器：`docker compose port web 80` 与 `ss -ltn | grep <端口>` 对一下。
+> 宿主机上别的服务若占了同一个端口（本机就是 Trilium 占着 `127.0.0.1:8080`），`curl localhost:8080` 会打到它，
+> 报出来的还是「接口 404」，很容易误判成后端没注册路由。
+
 ### 11.3 链接健康检查相关变量
 
 `LINK_CHECK_ENABLED` / `LINK_CHECK_TIMEOUT_MS` / `LINK_CHECK_TOTAL_TIMEOUT_MS` / `LINK_CHECK_MAX_REDIRECTS`，都走 `.env`（`env_file` 原本就整份注入），不填用默认值。SSRF 拦截不可关闭：私网/环回/云元数据地址一律直接记 `failed`，且不发出任何请求；后台 UI 只显示「链接不可访问」，被拦原因只进服务端日志。
