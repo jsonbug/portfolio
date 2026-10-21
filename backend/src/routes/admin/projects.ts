@@ -5,7 +5,8 @@
 //   PATCH  /admin/projects/:id             局部更新（slug 改名保留旧 slug → 301；状态机校验）
 //   DELETE /admin/projects/:id             软删除（deleted_at，可 restore）
 //   POST   /admin/projects/:id/restore     取消软删除
-//   PUT    /admin/projects/:id/metadata    整体替换自定义元数据 KV（B6 键名唯一）
+//   PUT    /admin/projects/:id/metadata    整体替换自定义元数据 KV（B6 键名唯一；条目带 kind: meta|metric）
+//   PUT    /admin/projects/:id/screenshots 整体替换截图（≤10 张，url 必须 http(s)，sort 即顺序）
 // 契约见 docs/api-contract.md §4.1。
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@prisma/client";
@@ -24,6 +25,7 @@ import {
   MetadataReplaceSchema,
   ProjectCreateSchema,
   ProjectUpdateSchema,
+  ScreenshotsReplaceSchema,
   type PublishStatus,
 } from "../../contract/schemas.js";
 
@@ -253,7 +255,8 @@ export async function adminProjectRoutes(app: FastifyInstance) {
     return toAdminDetail(restored);
   });
 
-  // 整体替换自定义元数据（先删后建，同一事务）：重复键名在应用层 400，不落到 409
+  // 整体替换自定义元数据（先删后建，同一事务）：重复键名 / metric 上限在应用层 400，不落到 409
+  // kind 缺省 meta（旧请求体不带也能过，不做破坏性变更）；metric 走详情页指标卡，≤2 条。
   app.put("/projects/:id/metadata", async (req) => {
     const { id } = req.params as { id: string };
     const items = validate(MetadataReplaceSchema, req.body);
@@ -267,12 +270,46 @@ export async function adminProjectRoutes(app: FastifyInstance) {
             project_id: id,
             key_label: item.key_label,
             value: item.value,
+            kind: item.kind ?? "meta",
             sort: item.sort ?? index,
           })),
         });
       }
-      return tx.project.findUniqueOrThrow({
+      // 元数据是详情页内容的一部分：必须 bump projects.updated_at，否则前台 recent 排序看不出改过
+      const bumped = await tx.project.update({
         where: { id },
+        data: { updated_at: new Date() },
+        include: adminProjectDetailInclude,
+      });
+      return bumped;
+    });
+    return toAdminDetail(updated);
+  });
+
+  // 整体替换截图（先删后建，同一事务）：≤10 张、url 必须 http(s)、caption ≤80 字，
+  // 顺序即 sort（不传 sort 时按数组下标），整体替换语义与 /metadata 一致（传 [] 即清空）。
+  app.put("/projects/:id/screenshots", async (req) => {
+    const { id } = req.params as { id: string };
+    const items = validate(ScreenshotsReplaceSchema, req.body);
+    await getProjectOr404(id);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.projectScreenshot.deleteMany({ where: { project_id: id } });
+      if (items.length > 0) {
+        await tx.projectScreenshot.createMany({
+          data: items.map((item, index) => ({
+            project_id: id,
+            url: item.url,
+            // 空白图注归一为 null：否则前端要区分 "" 与 null 两种「无图注」
+            caption: item.caption?.trim() ? item.caption.trim() : null,
+            sort: item.sort ?? index,
+          })),
+        });
+      }
+      // 截图同样属于详情页内容，bump updated_at（同 /metadata 口径）
+      return tx.project.update({
+        where: { id },
+        data: { updated_at: new Date() },
         include: adminProjectDetailInclude,
       });
     });

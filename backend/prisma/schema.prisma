@@ -46,10 +46,11 @@ model Project {
   created_at       DateTime  @default(now())
   updated_at       DateTime  @updatedAt
 
-  tech_stack ProjectTechStack[]
-  links      ProjectLink[]
-  metadata   ProjectMetadata[]
-  notes      Note[]
+  tech_stack  ProjectTechStack[]
+  links       ProjectLink[]
+  metadata    ProjectMetadata[]
+  screenshots ProjectScreenshot[]
+  notes       Note[]
 
   @@index([publish_status, deleted_at])
   @@index([name])
@@ -90,17 +91,33 @@ model ProjectLink {
 }
 
 // 自定义元数据 KV（固定列承载高频项，其余自由键值；同项目内 key 唯一）
+// kind：meta = 元数据 panel 的条目；metric = 详情页指标卡的格子（≤2 条，见契约）
 model ProjectMetadata {
   id         String @id @default(cuid())
   project_id String
   key_label  String
   value      String
+  kind       String @default("meta") // meta | metric
   sort       Int    @default(0)
 
   project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
   @@unique([project_id, key_label])
   @@map("project_metadata")
+}
+
+// 项目截图（F2「截图轮播」）：每项目 ≤10 张，url 只存原图，派生尺寸交前端
+model ProjectScreenshot {
+  id         String  @id @default(cuid())
+  project_id String
+  url        String // 必须 http(s)，应用层校验
+  caption    String? // 图注（≤80 字）；空则前端 alt 用「{项目名} 截图 n」
+  sort       Int     @default(0)
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@index([project_id])
+  @@map("project_screenshots")
 }
 
 // 笔记（N:1 项目，纯 Markdown，独立栏目 F4）

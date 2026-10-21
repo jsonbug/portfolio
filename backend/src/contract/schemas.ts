@@ -95,28 +95,110 @@ export const LinkUpdateSchema = z.object({
 export type LinkUpdate = z.infer<typeof LinkUpdateSchema>;
 
 // ---------- 元数据 KV ----------
+//
+// kind：meta = 元数据 panel 的普通条目；metric = 详情页指标卡的格子（≤2 条，键值更短）。
+// 缺省 meta——旧请求体不带 kind 也照样通过，不做破坏性变更。
+export const METADATA_KINDS = ["meta", "metric"] as const;
+export const MetadataKindSchema = z.enum(METADATA_KINDS);
+export type MetadataKind = z.infer<typeof MetadataKindSchema>;
+
+/** metric 型条目的额外约束（要放进指标卡格子：标签 ≤16 字、数值 ≤12 字、最多 2 条） */
+export const METRIC_LIMITS = { max: 2, keyLabel: 16, value: 12 } as const;
+
 export const MetadataItemSchema = z.object({
   key_label: z.string().trim().min(1).max(50),
   value: z.string().trim().min(1).max(500),
+  kind: MetadataKindSchema.optional(),
   sort: z.number().int().min(0).optional(),
 });
 export type MetadataItem = z.infer<typeof MetadataItemSchema>;
 
-// 同一项目内键名不可重复（B6）→ 应用层先给 400，而不是撞库得 409
+// 同一项目内键名不可重复（B6）→ 应用层先给 400，而不是撞库得 409；
+// metric ≤2 条、metric 条目 key_label ≤16 / value ≤12。
 export const MetadataReplaceSchema = z
   .array(MetadataItemSchema)
   .max(50)
-  .refine(
-    (items) => new Set(items.map((i) => i.key_label)).size === items.length,
-    { message: "同一项目内元数据键名不可重复" },
-  );
+  .superRefine((items, ctx) => {
+    const seen = new Set<string>();
+    items.forEach((item, index) => {
+      if (seen.has(item.key_label)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "key_label"],
+          message: "同一项目内元数据键名不可重复",
+        });
+      }
+      seen.add(item.key_label);
+    });
+
+    const metrics = items.filter((item) => item.kind === "metric");
+    if (metrics.length > METRIC_LIMITS.max) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `指标卡条目最多 ${METRIC_LIMITS.max} 条（当前 ${metrics.length}）`,
+      });
+    }
+    items.forEach((item, index) => {
+      if (item.kind !== "metric") return;
+      if (item.key_label.length > METRIC_LIMITS.keyLabel) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "key_label"],
+          message: `指标卡标签最多 ${METRIC_LIMITS.keyLabel} 字（当前 ${item.key_label.length}）`,
+        });
+      }
+      if (item.value.length > METRIC_LIMITS.value) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, "value"],
+          message: `指标卡数值最多 ${METRIC_LIMITS.value} 字（当前 ${item.value.length}）`,
+        });
+      }
+    });
+  });
 export type MetadataReplace = z.infer<typeof MetadataReplaceSchema>;
 
 export const MetadataResponseSchema = z.object({
   key_label: z.string(),
   value: z.string(),
+  kind: MetadataKindSchema,
   sort: z.number().int(),
 });
+export type MetadataResponse = z.infer<typeof MetadataResponseSchema>;
+
+// ---------- 项目截图（F2 截图轮播） ----------
+//
+// 只存原图 URL（派生尺寸交前端 object-fit，后端不做第二套图片管线）；
+// 整体替换语义同 /metadata，顺序即 sort；每项目 ≤10 张；caption 可空 ≤80 字。
+const screenshotUrlSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2048)
+  .refine((v) => /^https?:\/\//i.test(v), { message: "必须是 http(s) 地址" });
+
+export const SCREENSHOT_MAX = 10;
+export const SCREENSHOT_CAPTION_MAX = 80;
+
+export const ScreenshotItemSchema = z.object({
+  url: screenshotUrlSchema,
+  caption: z.string().trim().max(SCREENSHOT_CAPTION_MAX).nullable().optional(),
+  sort: z.number().int().min(0).optional(),
+});
+export type ScreenshotItem = z.infer<typeof ScreenshotItemSchema>;
+
+export const ScreenshotsReplaceSchema = z
+  .array(ScreenshotItemSchema)
+  .max(SCREENSHOT_MAX, { message: `每个项目最多 ${SCREENSHOT_MAX} 张截图` });
+export type ScreenshotsReplace = z.infer<typeof ScreenshotsReplaceSchema>;
+
+export const ScreenshotSchema = z.object({
+  id: z.string(),
+  url: z.string(),
+  caption: z.string().nullable(),
+  sort: z.number().int(),
+});
+export type Screenshot = z.infer<typeof ScreenshotSchema>;
 
 // ---------- 笔记（N:1 项目） ----------
 export const NoteSummarySchema = z.object({
@@ -124,6 +206,9 @@ export const NoteSummarySchema = z.object({
   slug: z.string(),
   title: z.string(),
   project: z.object({ slug: z.string(), name: z.string() }),
+  // 去 Markdown 后的前 120 字（超长加省略号，空正文 null）：列表 / 详情 / 后台三条路径共用，
+  // 详情不开口子，否则前端要为「有摘要」「没摘要」写两套渲染分支（契约 v1.2.3 §3.3）
+  excerpt: z.string().max(121).nullable(),
   tags: z.array(z.string()),
   published_at: isoDatetime().nullable(),
   created_at: isoDatetime(),
@@ -194,6 +279,8 @@ export const ProjectDetailSchema = ProjectListItemSchema.extend({
   start_year: z.number().int().nullable(),
   team_size: z.number().int().nullable(),
   metadata: z.array(MetadataResponseSchema),
+  // 按 sort 升序；无截图为 []（前端整块不渲染）
+  screenshots: z.array(ScreenshotSchema),
   notes: z.array(NoteSummarySchema),
 });
 export type ProjectDetail = z.infer<typeof ProjectDetailSchema>;

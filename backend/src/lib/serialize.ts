@@ -7,10 +7,12 @@ import type {
   AdminProjectListItem,
   Link,
   NoteDetail,
+  MetadataResponse,
   NoteSummary,
   ProjectDetail,
   ProjectListItem,
 } from "../contract/schemas.js";
+import type { Screenshot } from "../contract/schemas.js";
 
 const toIso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
 
@@ -21,12 +23,16 @@ const techAndLinks = {
 } satisfies Prisma.ProjectInclude;
 
 export const projectListInclude = techAndLinks satisfies Prisma.ProjectInclude;
-// 后台列表：与公开列表同一组关联（不含 metadata/notes，避免列表页 N+1 展开）
+// 后台列表：与公开列表同一组关联（不含 metadata/notes/screenshots，避免列表页 N+1 展开）
 export const adminProjectListInclude = techAndLinks satisfies Prisma.ProjectInclude;
+
+// 截图：只存原图 URL，派生尺寸交前端（F2）；按 sort 升序
+const screenshotsInclude = { screenshots: { orderBy: { sort: "asc" } } } satisfies Prisma.ProjectInclude;
 
 // 前台详情：只挂已发布笔记（N3/F2「相关笔记」）
 export const publicProjectDetailInclude = {
   ...techAndLinks,
+  ...screenshotsInclude,
   metadata: { orderBy: { sort: "asc" } },
   notes: {
     where: { publish_status: "published" },
@@ -38,6 +44,7 @@ export const publicProjectDetailInclude = {
 // 后台详情：所有笔记（含草稿）
 export const adminProjectDetailInclude = {
   ...techAndLinks,
+  ...screenshotsInclude,
   metadata: { orderBy: { sort: "asc" } },
   notes: {
     orderBy: { updated_at: "desc" },
@@ -85,9 +92,35 @@ export function toLink(l: {
   };
 }
 
+const EXCERPT_MAX = 120;
+
+/**
+ * 笔记摘要：正文去掉 Markdown 标记后的前 120 字，超长补省略号，空正文为 null。
+ *
+ * 三处调用（公开列表 / 公开详情 / 后台列表与详情）共用这一个函数——契约 v1.2.3 要求详情也必带，
+ * 一旦给某条路径开口子，前端就得为「有摘要 / 没摘要」写两套渲染分支。
+ */
+export function excerptOf(bodyMd: string | null | undefined): string | null {
+  if (!bodyMd) return null;
+  const plain = bodyMd
+    .replace(/```[\s\S]*?```/g, " ") // 代码块整段丢弃
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ") // 图片
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1") // 链接保留文字
+    .replace(/<[^>]+>/g, " ") // 内联 HTML
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "") // 标题
+    .replace(/^\s{0,3}>\s?/gm, "") // 引用
+    .replace(/^\s{0,3}([-*+]|\d+\.)\s+/gm, "") // 列表序号
+    .replace(/[*_~`]/g, "") // 强调 / 行内代码标记
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!plain) return null;
+  return plain.length > EXCERPT_MAX ? `${plain.slice(0, EXCERPT_MAX)}…` : plain;
+}
+
 // 笔记摘要：project 由调用方显式传入（列表来自 note.project；项目详情里的笔记即父项目）
 type NoteBase = {
   id: string;
+  body_md: string;
   slug: string;
   title: string;
   published_at: Date | null;
@@ -102,6 +135,7 @@ export function toNoteSummary(n: NoteBase, project: { slug: string; name: string
     slug: n.slug,
     title: n.title,
     project: { slug: project.slug, name: project.name },
+    excerpt: excerptOf(n.body_md),
     tags: n.tags.map((t) => t.name),
     published_at: toIso(n.published_at),
     created_at: n.created_at.toISOString(),
@@ -144,8 +178,22 @@ function baseListItem(p: ProjectListRow): ProjectListItem {
   };
 }
 
-const metadataItems = (rows: Array<{ key_label: string; value: string; sort: number }>) =>
-  rows.map((m) => ({ key_label: m.key_label, value: m.value, sort: m.sort }));
+const metadataItems = (rows: Array<{ key_label: string; value: string; kind: string; sort: number }>) =>
+  rows.map((m) => ({
+    key_label: m.key_label,
+    value: m.value,
+    kind: m.kind as MetadataResponse["kind"],
+    sort: m.sort,
+  }));
+
+export function toScreenshot(s: {
+  id: string;
+  url: string;
+  caption: string | null;
+  sort: number;
+}): Screenshot {
+  return { id: s.id, url: s.url, caption: s.caption, sort: s.sort };
+}
 
 // ---------- 前台公开（不含 publish_status / deleted_at） ----------
 export function toPublicListItem(p: ProjectListRow): ProjectListItem {
@@ -161,6 +209,7 @@ export function toPublicDetail(p: PublicProjectDetailRow): ProjectDetail {
     start_year: p.start_year,
     team_size: p.team_size,
     metadata: metadataItems(p.metadata),
+    screenshots: p.screenshots.map(toScreenshot),
     notes: p.notes.map((n) => toNoteSummary(n, { slug: p.slug, name: p.name })),
   };
 }
@@ -188,6 +237,7 @@ export function toAdminDetail(p: AdminProjectDetailRow): AdminProjectDetail {
     start_year: p.start_year,
     team_size: p.team_size,
     metadata: metadataItems(p.metadata),
+    screenshots: p.screenshots.map(toScreenshot),
     // 后台详情含全部笔记（含草稿），逐条带 publish_status 供编辑器区分（前台详情只出已发布）
     notes: p.notes.map((n) => ({
       ...toNoteSummary(n, { slug: p.slug, name: p.name }),

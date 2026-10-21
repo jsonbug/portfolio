@@ -1,6 +1,6 @@
 # API 契约（冻结 · v1.2）
 
-> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1；v1.2.2 补链接健康检查 §4.4 与两套 counts 对称口径；v1.2.3 补分页越界、`details[].code`、`NoteSummary.excerpt` 三处条文，见 1.4；v1.2.4 把信封层 `error.code` 值域归位到 1.3 并校正 1.4 第 2 条的 `code` 来源措辞）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
+> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1；v1.2.2 补链接健康检查 §4.4 与两套 counts 对称口径；v1.2.3 补分页越界、`details[].code`、`NoteSummary.excerpt` 三处条文，见 1.4；v1.2.4 把信封层 `error.code` 值域归位到 1.3 并校正 1.4 第 2 条的 `code` 来源措辞；v1.2.5 按 compose 冒烟实测补 4.1 的子资源条文；v1.2.6 补项目截图与元数据 `kind` 条文，见 4.1.1）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
 > 代码参考（可执行形态）：`backend/src/contract/schemas.ts`；本文档与 `schemas.ts` 是同一契约的两种载体，
 > 任何改动都是契约变更，需在 issue 中说明。
 >
@@ -85,6 +85,7 @@
 ```
 
 判定顺序：**先校验格式与范围（400），再执行查询、判定是否越界（200 空页）**。
+两条规则适用于**全部列表端点**（`/projects`、`/notes`、`/admin/projects`、`/admin/notes`），不因端点而异。
 
 **2. `details[]`：结构保留，`code` 不承诺稳定**
 
@@ -210,13 +211,20 @@ draft ──publish──▶ published ──archive──▶ archived
   "license": "MIT",
   "start_year": 2023,
   "team_size": 3,
-  "metadata": [{ "key_label": "代码行数", "value": "12k", "sort": 0 }],
+  "metadata": [
+    { "key_label": "代码行数", "value": "12k", "sort": 0, "kind": "meta" },
+    { "key_label": "gzip 包体", "value": "48KB", "sort": 1, "kind": "metric" }
+  ],
+  "screenshots": [
+    { "id": "s1", "url": "https://cdn.example.com/waveform-1.webp",
+      "caption": "Waveform Studio — 编辑器中的波形轨道（v2.4）", "sort": 0 }
+  ],
   "notes": [
     {
       "id": "n1", "slug": "note-1", "title": "复盘",
       "project": { "slug": "portfolio-platform", "name": "项目展示平台" },
+      "excerpt": "这次把列表重写成 URL 查询为唯一真源…",
       "tags": ["复盘"], "published_at": "2026-09-10T00:00:00.000Z",
-      "excerpt": "这次把做过的项目收拢成一页一页……",
       "created_at": "2026-09-09T00:00:00.000Z", "updated_at": "2026-09-10T00:00:00.000Z"
     }
   ]
@@ -224,7 +232,8 @@ draft ──publish──▶ published ──archive──▶ archived
 ```
 
 - 固定元数据列（`role` / `license` / `start_year` / `team_size`）为 `null` 时前端整行不渲染
-- `metadata` 为自定义 KV，按 `sort` 升序；`notes` 只含已发布笔记，按发布时间倒序
+- `metadata` 为自定义 KV，按 `sort` 升序；每条**必带 `kind`**（`meta` | `metric`，恒不为空，见 4.1.1）；`notes` 只含已发布笔记，按发布时间倒序
+- `screenshots[]` 为 `{ id, url, caption | null, sort }`，按 `sort` 升序，**无截图为 `[]`（不是 `null`，前端整块不渲染）**；只存原图 URL，见 4.1.1
 - `notes[]` 为 `NoteSummary`，**必带 `excerpt`**（定义见 1.4 第 3 条）
 - **旧 slug**（改名过）：`301 Moved Permanently`，`Location: /api/v1/projects/<new-slug>`；目标不可见时 404
 
@@ -232,11 +241,14 @@ draft ──publish──▶ published ──archive──▶ archived
 
 | 参数 | 说明 |
 |---|---|
-| `search` | 匹配 `title` / `body_md` |
+| `search` | 匹配 `title` / `body_md`，**按字面量**（`%` / `_` 不是通配符，见 3.7） |
 | `tag` | 标签精确匹配 |
 | `page` / `pageSize` | 分页 |
 
 `items[]` 为 `NoteSummary`（同上 `notes` 元素结构，含 `excerpt`，见 1.4 第 3 条），按 `published_at` 倒序（空值再按 `created_at` 倒序）。
+
+`NoteSummary.excerpt`（v1.2.3 起**必带，无例外**）：定义与取值以 **1.4 第 3 条为唯一出处**（本处不复述）。
+列表 / 详情 / 后台三条路径共用同一序列化实现——详情不开口子，否则前端要为「有摘要」「没摘要」写两套渲染分支。
 
 > 分组口径：F4 的「左栏按项目分组」由前端在已取回的列表上分组，本接口**不提供**分组聚合或 `project` 过滤参数。
 > 笔记量级小（个人站），前端用 `pageSize=100` 一次取全后分组；跨页分组的语义不在本契约内。
@@ -256,12 +268,25 @@ draft ──publish──▶ published ──archive──▶ archived
 ```
 
 只汇总**前台可见项目**的技术栈名（去重升序），前台筛选下拉与后台编辑器共用。
+该接口不接收 `search`，不涉及通配符转义。
 
 ### 3.6 `GET /health`
 
 ```json
 { "status": "ok", "uptime": 12.3 }
 ```
+
+### 3.7 `search` 的匹配语义（通则）
+
+`search` 一律**按字面量**匹配子串：SQL 的 `%` 与 `_` 是 LIKE 通配符，实现必须转义（`ESCAPE '\\'`）
+或在应用层比较，否则用户搜「100%」「a_b」会命中无关记录。大小写不敏感的实现细节不属于契约（SQLite `LIKE` 对 ASCII 天然如此）。
+
+| 端点 | 状态 |
+|---|---|
+| `GET /projects` | ✅ 已按字面量（应用层比较，见 `backend/src/routes/projects.ts`） |
+| `GET /notes` | ✅ 已按字面量（`ESCAPE '\\'` + id 集合，见 `backend/src/routes/notes.ts`） |
+| `GET /technologies` | — 不接收 `search` |
+| `GET /admin/projects`、`GET /admin/notes` | ⚠️ 仍走未转义的 SQL `LIKE`：v1.2.3 批次文件范围锁定在前台三个路由，这两个留待下一批（与前台同规则，不得各自定义语义） |
 
 ## 4. 后台接口（`/api/v1/admin/**`，需 Bearer）
 
@@ -271,11 +296,19 @@ draft ──publish──▶ published ──archive──▶ archived
 |---|---|---|
 | GET | `/admin/projects` | 列表；`publish_status` / `progress` / `search`（name、summary、slug 子串）/ `includeDeleted`（`true`/`1`）过滤；按 `updated_at` 倒序；额外返回 `counts` 见下 |
 | GET | `/admin/projects/:id` | 详情，含**全部**笔记（含草稿，逐条带 `publish_status`）+ `publish_status` / `published_at` / `deleted_at` / `cover_source_url` |
-| POST | `/admin/projects` | 新建，默认 `publish_status=draft`、`progress=ongoing`；201 |
+| POST | `/admin/projects` | 新建，默认 `publish_status=draft`、`progress=ongoing`；201。**请求体不含 `links` / `metadata`**（见下「链接与元数据是独立资源」） |
 | PATCH | `/admin/projects/:id` | 局部更新；slug 改名规则见下；状态机见 2.1 |
 | DELETE | `/admin/projects/:id` | 软删除（写 `deleted_at`），幂等，返回详情 |
 | POST | `/admin/projects/:id/restore` | 取消软删除 |
-| PUT | `/admin/projects/:id/metadata` | 整体替换自定义 KV（数组，≤50 条，键名不得重复），返回项目详情 |
+| POST | `/admin/projects/:id/links` | 新增一条链接（body `{type, label?, url, sort?}`），201，返回该链接；新增后异步触发健康检查（见 4.4） |
+| PATCH | `/admin/links/:id` | 修改链接（`type` / `label` / `url` / `sort`）；**仅当 `url` 变化时**异步重检 |
+| DELETE | `/admin/links/:id` | 删除链接，204 |
+| PUT | `/admin/projects/:id/metadata` | 整体替换自定义 KV（body 是**裸数组** `[{key_label, value, sort?, kind?}]`，≤50 条，键名不得重复；`kind` 缺省 `meta`，见 4.1.1），返回项目详情 |
+
+> **链接与元数据是独立资源**（对齐 v1.2 数据模型：`Link`/`ProjectMetadata` 是子表，不是项目表字段）：
+> 新建项目只能带 `ProjectCreate` 里的字段，body 里多余的键（如 `links`、`metadata`）**被忽略而不是报错**——
+> 所以「建项目 + 同时填链接」要分两步：先 `POST /admin/projects` 拿 `id`，再逐条 `POST /admin/projects/:id/links`。
+> 元数据同理，用 `PUT .../metadata` 整体替换（空数组 = 清空）。键名字段是 **`key_label`**，不是 `key`。
 
 **后台分段计数（B9）**：`GET /admin/projects` 的响应在分页信封上额外带 `counts`：
 
@@ -317,6 +350,41 @@ draft ──publish──▶ published ──archive──▶ archived
 | PATCH | `/admin/links/:id` |
 | DELETE | `/admin/links/:id` → 204 |
 | POST | `/admin/links/:id/check` → 200，立即重检（见 4.4） |
+
+### 4.1.1 项目截图 与 元数据 `kind`（v1.2.6 新增）
+
+截图与元数据都是**项目详情的子内容**，读写都以整个数组为单位（与 `/metadata` 同语义），**不是项目表字段**——建项目 / 改项目的 body 里带 `screenshots` / `metadata` 依旧被忽略。
+
+**读**：`GET /projects/:slug`（3.2）与 `GET /admin/projects/:id` 的响应都带
+
+```json
+"screenshots": [{ "id": "s1", "url": "https://…/a.webp", "caption": "编辑器中的波形轨道（v2.4）", "sort": 0 }]
+```
+
+按 `sort` 升序；无截图为 `[]`（不是 `null`）。`caption` 为 `null` 表示无图注。
+
+**写**：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| PUT | `/admin/projects/:id/screenshots` | 整体替换截图（body 是**裸数组**，≤10 条），返回更新后的后台详情；项目不存在 → 404 |
+
+- **整体替换**：未出现在数组里的行被删除；`sort` 缺省用数组下标；`[]` = 清空。
+- **校验**（全部走既有 400 `VALIDATION_ERROR` + `details[{path,message}]`，**不新增错误码**）：
+  - `url` 必填，≤2048 且必须 `http(s)://`——`javascript:` / `data:` / 相对路径 / `ftp:` 一律 400。
+  - `caption` 可空、≤80 字（按裁剪后长度）；**两端空白裁剪，空白字符串归一为 `null`**：wire 上不出现空串，客户端不必处理 `""`。
+  - 一次 ≤10 张（第 11 张 → 400，整批拒绝）。
+- **`sort` 可重复**：**客户端不得假设唯一，同值保持数组序**（服务端不因重复而拒绝，避免前端整批 400）。
+- **不承诺**：URL 只存原图，后端不做派生尺寸（前端用 `object-fit` 处理）；截图**不进列表接口**（列表仍只有 3.1 的 `ProjectListItem` 字段）。
+
+**元数据 `kind`**（`PUT /admin/projects/:id/metadata`，见 4.1）：
+
+- 请求条目可选 `"meta" | "metric"`，**缺省 `meta`**——旧请求体不带 `kind` 也照样通过，不做破坏性变更。
+- 响应 `metadata[]` 在**三条路径**（公开详情 3.2 / 后台详情 / 元数据写接口响应）都带 `kind`，值恒为 `meta` 或 `metric`。
+- `metric` 上限：**≤2 条**（第 3 条 → 400）、`key_label` ≤16 字、`value` ≤12 字；`meta` 沿用 50 / 500（见 4.1）。
+- 超限一律 400，`details` 逐项中文说明（含当前值与上限），**metric 按条数判、整批 400，不静默截断**。
+
+**副作用**：任一次成功的截图 / 元数据替换都 **bump 项目 `updated_at`**（含传 `[]` 清空）——前台 recent 排序必须能看出内容变更。
 
 ### 4.4 链接健康检查（B16，v1.2.2 新增）
 
@@ -408,5 +476,7 @@ IPv4 映射（`::ffff:`）、NAT64、6to4 里嵌入的 IPv4 同样按上述规�
 | v1.2 | 本文件：第五节口径落地，`publish_status`/`progress` 双字段、slug 定位 + 301、笔记 N:1、元数据固定列 + KV、链接枚举调整、`counts` 分段统计 |
 | v1.2.1 | ALICE-8 冻结核对：后台 `counts`、后台详情笔记 `publish_status`、排序空值、search 字段、login 公开性、slug 命名空间、snake_case、Markdown 责任；补预留端点表 |
 | v1.2.2 | B16 链接健康检查落地：`last_status` 改为 `ok`/`failed`/`unknown`（原 `null` 不再出现）、判定与超时口径、SSRF 防护、`POST /admin/links/:id/check`（见 4.4）；两套 `counts` 对称口径写明；`/notes` 超 100 篇截断提示 |
-| v1.2.3 | 补三处此前只有实现没有条文的细节（见 1.4）：① 分页 `page > totalPages` 返回 200 + `items: []` + 真 `total` / `totalPages`，格式与范围错误仍 400；② `details[]` 结构保留、`code` 透传 zod issue code 且不承诺稳定、客户端不得分支；③ `NoteSummary.excerpt`（去 Markdown 取前 120 字、超长加省略号、空正文 `null`）为必带字段 |
+| v1.2.3 | 补三处此前只有实现没有条文的细节（见 1.4）：① 分页 `page > totalPages` 返回 200 + `items: []` + 真 `total` / `totalPages`，格式与范围错误仍 400，两条语义适用于全部列表端点；② `details[]` 结构保留、`code` 不承诺稳定、客户端不得分支（`code` 来源措辞由 v1.2.4 校正）；③ `NoteSummary.excerpt`（去 Markdown 取前 120 字、超长加省略号、空正文 `null`）为必带字段。同版登记：条文与 `backend/src/contract/schemas.ts` 成对维护、`search` 字面量匹配通则（见 3.7） |
 | v1.2.4 | 信封层 `error.code` 值域归位：1.3 明确为唯一出处且 8 个值全冻结（FORBIDDEN 为保留位、METHOD_NOT_ALLOWED 由框架 405 产生），1.2 增加值域段并规定「只允许对 `error.code` 分支、`code` 与状态冲突时以 `code` 为准」；同时校正 1.4 第 2 条的 `code` 来源措辞——不限于 zod issue code，`conflict` / `invalid_transition` 等手写标识同样存在且同样不得依赖 |
+| v1.2.5 | compose 部署冒烟实测发现：建项目 body **不含** `links`/`metadata`（多余键被忽略而非报错），补 4.1「链接与元数据是独立资源」与 `POST /admin/projects/:id/links` / `PATCH|DELETE /admin/links/:id` 行；元数据 body 明确为裸数组、键名字段 `key_label`。**纯条文补正，无实现变更** |
+| v1.2.6 | 项目截图与元数据 `kind` 落条文（见 3.2、4.1.1）：`screenshots[]` 形状与 `PUT /admin/projects/:id/screenshots` 整体替换（≤10 张、`http(s)`、`caption` ≤80 且空白归一 `null`）、`metadata[].kind` 三路径必带、metric ≤2 / ≤16 / ≤12 与 meta 50 / 500、替换 bump `updated_at`、URL 只存原图且截图不进列表。三条实现期假设固定为契约措辞：`sort` 可重复（客户端不得假设唯一，同值保持数组序）、`caption` 空白归一 `null`（wire 上不出现空串，客户端不必处理 `""`）、metric 按条数判且超限整批 400 不静默截断。**纯条文补正，无实现变更** |

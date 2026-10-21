@@ -10,7 +10,11 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # prisma 引擎在 alpine 上依赖 openssl
-RUN apk add --no-cache openssl
+# prisma 引擎需要 libssl3（node:22-alpine 基础镜像已自带 libssl.so.3 / libcrypto.so.3）；
+# `openssl` 包只是 CLI 兜底。私有部署/受限网络里 Alpine CDN 常常不可达，拉不到就跳过，
+# 不让镜像构建因为一个非必需包直接失败（见 docs/deployment.md §11.1）。
+# 装了就在镜像里留一个标记；没装成功则容器启动时明确声明降级（容错不等于静默）。
+RUN (apk add --no-cache openssl && touch /app/.openssl-cli   || echo "WARN: openssl 包安装失败，使用基础镜像自带 libssl3（prisma 引擎可用）")
 
 COPY backend/package.json backend/package-lock.json ./
 RUN npm ci
@@ -28,7 +32,8 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 
 # 非 root：使用镜像内置的 node（uid/gid 1000）；/data 为 SQLite 命名卷挂载点
-RUN apk add --no-cache openssl \
+# 装了就在镜像里留一个标记；没装成功则容器启动时明确声明降级（容错不等于静默）。
+RUN (apk add --no-cache openssl && touch /app/.openssl-cli   || echo "WARN: openssl 包安装失败，使用基础镜像自带 libssl3（prisma 引擎可用）") \
   && mkdir -p /data \
   && chown -R node:node /data
 
@@ -48,4 +53,7 @@ USER node
 EXPOSE 3000
 
 # 先迁移再起服务：迁移失败则容器启动失败（不会带着旧 schema 提供服务）
-CMD ["sh", "-c", "npx prisma migrate deploy && exec node dist/index.js"]
+# 启动第一件事：openssl CLI 缺失时打一行显式降级声明。
+#   - 运行时不依赖 openssl 命令：prisma 引擎用基础镜像自带的 libssl.so.3，口令摘要用 node:crypto（scrypt）；
+#   - openssl 只在宿主/CI 里用于 `openssl rand -base64 48` 生成密钥，与容器内功能无关。
+CMD ["sh", "-c", "[ -f /app/.openssl-cli ] || echo '[openssl] 未安装 openssl CLI，依赖它的兜底功能降级：运行时只使用 libssl（prisma 引擎）与 node:crypto（scrypt 口令摘要），不受影响'; npx prisma migrate deploy && exec node dist/index.js"]
