@@ -215,6 +215,7 @@ draft ──publish──▶ published ──archive──▶ archived
     {
       "id": "n1", "slug": "note-1", "title": "复盘",
       "project": { "slug": "portfolio-platform", "name": "项目展示平台" },
+      "excerpt": "这次把列表重写成 URL 查询为唯一真源…",
       "tags": ["复盘"], "published_at": "2026-09-10T00:00:00.000Z",
       "excerpt": "这次把做过的项目收拢成一页一页……",
       "created_at": "2026-09-09T00:00:00.000Z", "updated_at": "2026-09-10T00:00:00.000Z"
@@ -232,11 +233,15 @@ draft ──publish──▶ published ──archive──▶ archived
 
 | 参数 | 说明 |
 |---|---|
-| `search` | 匹配 `title` / `body_md` |
+| `search` | 匹配 `title` / `body_md`，**按字面量**（`%` / `_` 不是通配符，见 3.7） |
 | `tag` | 标签精确匹配 |
 | `page` / `pageSize` | 分页 |
 
 `items[]` 为 `NoteSummary`（同上 `notes` 元素结构，含 `excerpt`，见 1.4 第 3 条），按 `published_at` 倒序（空值再按 `created_at` 倒序）。
+
+`NoteSummary.excerpt`（v1.2.3 起**必带，无例外**）：正文去掉 Markdown 标记后的前 120 字，超长补 `…`（故长度上限 121），
+空正文或去标记后为空则为 `null`。列表 / 详情 / 后台三条路径共用同一序列化实现——详情不开口子，
+否则前端要为「有摘要」「没摘要」写两套渲染分支。
 
 > 分组口径：F4 的「左栏按项目分组」由前端在已取回的列表上分组，本接口**不提供**分组聚合或 `project` 过滤参数。
 > 笔记量级小（个人站），前端用 `pageSize=100` 一次取全后分组；跨页分组的语义不在本契约内。
@@ -256,12 +261,25 @@ draft ──publish──▶ published ──archive──▶ archived
 ```
 
 只汇总**前台可见项目**的技术栈名（去重升序），前台筛选下拉与后台编辑器共用。
+该接口不接收 `search`，不涉及通配符转义。
 
 ### 3.6 `GET /health`
 
 ```json
 { "status": "ok", "uptime": 12.3 }
 ```
+
+### 3.7 `search` 的匹配语义（通则）
+
+`search` 一律**按字面量**匹配子串：SQL 的 `%` 与 `_` 是 LIKE 通配符，实现必须转义（`ESCAPE '\\'`）
+或在应用层比较，否则用户搜「100%」「a_b」会命中无关记录。大小写不敏感的实现细节不属于契约（SQLite `LIKE` 对 ASCII 天然如此）。
+
+| 端点 | 状态 |
+|---|---|
+| `GET /projects` | ✅ 已按字面量（应用层比较，见 `backend/src/routes/projects.ts`） |
+| `GET /notes` | ✅ 已按字面量（`ESCAPE '\\'` + id 集合，见 `backend/src/routes/notes.ts`） |
+| `GET /technologies` | — 不接收 `search` |
+| `GET /admin/projects`、`GET /admin/notes` | ⚠️ 仍走未转义的 SQL `LIKE`：v1.2.3 批次文件范围锁定在前台三个路由，这两个留待下一批（与前台同规则，不得各自定义语义） |
 
 ## 4. 后台接口（`/api/v1/admin/**`，需 Bearer）
 
@@ -415,6 +433,7 @@ IPv4 映射（`::ffff:`）、NAT64、6to4 里嵌入的 IPv4 同样按上述规�
 | v1.0 | ALICE-6 MVP 冻结（单字段 `status`、笔记 1:1、`website` 链接类型、camelCase 字段） |
 | v1.2 | 本文件：第五节口径落地，`publish_status`/`progress` 双字段、slug 定位 + 301、笔记 N:1、元数据固定列 + KV、链接枚举调整、`counts` 分段统计 |
 | v1.2.1 | ALICE-8 冻结核对：后台 `counts`、后台详情笔记 `publish_status`、排序空值、search 字段、login 公开性、slug 命名空间、snake_case、Markdown 责任；补预留端点表 |
+| v1.2.3 | 契约条文与 `backend/src/contract/schemas.ts` 成对维护：`NoteSummary.excerpt` 三路径必带（见 3.3）、`search` 字面量匹配通则（见 3.6）、分页越界与参数非法的两类语义（见 1） |
 | v1.2.2 | B16 链接健康检查落地：`last_status` 改为 `ok`/`failed`/`unknown`（原 `null` 不再出现）、判定与超时口径、SSRF 防护、`POST /admin/links/:id/check`（见 4.4）；两套 `counts` 对称口径写明；`/notes` 超 100 篇截断提示 |
 | v1.2.3 | 补三处此前只有实现没有条文的细节（见 1.4）：① 分页 `page > totalPages` 返回 200 + `items: []` + 真 `total` / `totalPages`，格式与范围错误仍 400；② `details[]` 结构保留、`code` 透传 zod issue code 且不承诺稳定、客户端不得分支；③ `NoteSummary.excerpt`（去 Markdown 取前 120 字、超长加省略号、空正文 `null`）为必带字段 |
 | v1.2.4 | 信封层 `error.code` 值域归位：1.3 明确为唯一出处且 8 个值全冻结（FORBIDDEN 为保留位、METHOD_NOT_ALLOWED 由框架 405 产生），1.2 增加值域段并规定「只允许对 `error.code` 分支、`code` 与状态冲突时以 `code` 为准」；同时校正 1.4 第 2 条的 `code` 来源措辞——不限于 zod issue code，`conflict` / `invalid_transition` 等手写标识同样存在且同样不得依赖 |

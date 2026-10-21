@@ -91,9 +91,35 @@ export function toLink(l: {
   };
 }
 
+const EXCERPT_MAX = 120;
+
+/**
+ * 笔记摘要：正文去掉 Markdown 标记后的前 120 字，超长补省略号，空正文为 null。
+ *
+ * 三处调用（公开列表 / 公开详情 / 后台列表与详情）共用这一个函数——契约 v1.2.3 要求详情也必带，
+ * 一旦给某条路径开口子，前端就得为「有摘要 / 没摘要」写两套渲染分支。
+ */
+export function excerptOf(bodyMd: string | null | undefined): string | null {
+  if (!bodyMd) return null;
+  const plain = bodyMd
+    .replace(/```[\s\S]*?```/g, " ") // 代码块整段丢弃
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ") // 图片
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1") // 链接保留文字
+    .replace(/<[^>]+>/g, " ") // 内联 HTML
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "") // 标题
+    .replace(/^\s{0,3}>\s?/gm, "") // 引用
+    .replace(/^\s{0,3}([-*+]|\d+\.)\s+/gm, "") // 列表序号
+    .replace(/[*_~`]/g, "") // 强调 / 行内代码标记
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!plain) return null;
+  return plain.length > EXCERPT_MAX ? `${plain.slice(0, EXCERPT_MAX)}…` : plain;
+}
+
 // 笔记摘要：project 由调用方显式传入（列表来自 note.project；项目详情里的笔记即父项目）
 type NoteBase = {
   id: string;
+  body_md: string;
   slug: string;
   title: string;
   published_at: Date | null;
@@ -108,6 +134,7 @@ export function toNoteSummary(n: NoteBase, project: { slug: string; name: string
     slug: n.slug,
     title: n.title,
     project: { slug: project.slug, name: project.name },
+    excerpt: excerptOf(n.body_md),
     tags: n.tags.map((t) => t.name),
     published_at: toIso(n.published_at),
     created_at: n.created_at.toISOString(),

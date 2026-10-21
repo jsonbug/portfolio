@@ -17,14 +17,35 @@ const PUBLIC_NOTE_WHERE = {
   project: { publish_status: "published", deleted_at: null },
 } satisfies Prisma.NoteWhereInput;
 
+/** SQL LIKE 的元字符转义：`%` 与 `_` 必须当字面量，否则搜「100%」「a_b」会命中一切。 */
+const escapeLike = (term: string): string => term.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+
+/**
+ * 命中的笔记 id（标题或正文包含关键字，字面量匹配）。
+ *
+ * 用 `$queryRaw` 而不是 Prisma `contains`：后者编译成不带 ESCAPE 的 LIKE，无法转义通配符；
+ * 这里带上 `ESCAPE '\\'`，再把 id 集合交回 Prisma 做排序与分页（skip/take/count 照常生效）。
+ */
+async function searchNoteIds(term: string): Promise<string[]> {
+  const pattern = `%${escapeLike(term)}%`;
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT n.id AS id
+    FROM notes n
+    JOIN projects p ON p.id = n.project_id
+    WHERE n.publish_status = 'published'
+      AND p.publish_status = 'published'
+      AND p.deleted_at IS NULL
+      AND (n.title LIKE ${pattern} ESCAPE '\\' OR n.body_md LIKE ${pattern} ESCAPE '\\')
+  `;
+  return rows.map((r) => r.id);
+}
+
 export async function noteRoutes(app: FastifyInstance) {
   app.get("/notes", async (req) => {
     const q = validate(PublicNoteListQuerySchema, req.query);
     const where: Prisma.NoteWhereInput = {
       ...PUBLIC_NOTE_WHERE,
-      ...(q.search
-        ? { OR: [{ title: { contains: q.search } }, { body_md: { contains: q.search } }] }
-        : {}),
+      ...(q.search ? { id: { in: await searchNoteIds(q.search) } } : {}),
       ...(q.tag ? { tags: { some: { name: q.tag } } } : {}),
     };
 
