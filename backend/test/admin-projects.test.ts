@@ -1,13 +1,14 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+// 后台项目接口：默认值、slug 唯一、状态机、progress 独立、技术栈/元数据整体替换、软删除
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
-import { auth, getToken, wipeDb } from "./helpers.js";
+import { prisma } from "../src/lib/prisma.js";
+import { auth, createProject, getToken, wipeDb } from "./helpers.js";
 
 let app: FastifyInstance;
 let token: string;
 
 beforeAll(async () => {
-  await wipeDb();
   app = buildApp();
   token = await getToken(app);
 });
@@ -16,346 +17,341 @@ afterAll(async () => {
   await app.close();
 });
 
-async function createProject(payload: Record<string, unknown> = {}) {
-  return app.inject({
-    method: "POST",
-    url: "/api/v1/admin/projects",
-    headers: auth(token),
-    payload: { name: "测试项目", ...payload },
-  });
-}
+beforeEach(async () => {
+  await wipeDb();
+});
 
-describe("2.2 项目 CRUD", () => {
-  it("创建项目：默认 draft、无技术栈、无笔记、未删除", async () => {
-    const res = await createProject({ name: "博客系统" });
-    expect(res.statusCode).toBe(201);
-    const body = res.json() as Record<string, unknown>;
-    expect(body.name).toBe("博客系统");
-    expect(body.status).toBe("draft");
-    expect(body.technologies).toEqual([]);
-    expect(body.note).toBeNull();
-    expect(body.deletedAt).toBeNull();
-  });
+const patch = (id: string, payload: Record<string, unknown>) =>
+  app.inject({ method: "PATCH", url: `/api/v1/admin/projects/${id}`, headers: auth(token), payload });
 
-  it("创建项目：缺 name 返回 400", async () => {
-    const res = await createProject({ name: undefined });
-    expect(res.statusCode).toBe(400);
-    expect((res.json() as { error: { code: string } }).error.code).toBe("VALIDATION_ERROR");
+const get = (id: string) =>
+  app.inject({ method: "GET", url: `/api/v1/admin/projects/${id}`, headers: auth(token) });
+
+describe("POST /api/v1/admin/projects", () => {
+  it("默认 draft + ongoing，published_at 为空；公开不可见", async () => {
+    const created = await createProject(app, token, { name: "新项目", slug: "new-project" });
+    expect(created.publish_status).toBe("draft");
+    expect(created.progress).toBe("ongoing");
+    expect(created.published_at).toBeNull();
+    expect(created.deleted_at).toBeNull();
+    expect(created.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  it("创建项目：非法 status 返回 400", async () => {
-    const res = await createProject({ status: "published2" });
-    expect(res.statusCode).toBe(400);
+  it("直接以 published 创建时写入 published_at", async () => {
+    const created = await createProject(app, token, { name: "直接发布", publish_status: "published" });
+    expect(created.publish_status).toBe("published");
+    expect(typeof created.published_at).toBe("string");
   });
 
-  it("创建项目：coverImage 可写并返回原值", async () => {
-    const res = await createProject({ coverImage: "https://example.com/cover.webp" });
-    expect(res.statusCode).toBe(201);
-    expect((res.json() as { coverImage: string }).coverImage).toBe(
-      "https://example.com/cover.webp",
-    );
-  });
-
-  it("创建项目：不传 coverImage 默认 null", async () => {
-    const res = await createProject({ name: "无封面" });
-    expect(res.statusCode).toBe(201);
-    expect((res.json() as { coverImage: string | null }).coverImage).toBeNull();
-  });
-
-  it("创建项目：coverImage 显式传 null 返回 null", async () => {
-    const res = await createProject({ name: "空封面", coverImage: null });
-    expect(res.statusCode).toBe(201);
-    expect((res.json() as { coverImage: string | null }).coverImage).toBeNull();
-  });
-
-  it("创建项目：coverImage 非法协议返回 400", async () => {
-    const res = await createProject({ coverImage: "ftp://example.com/x.png" });
-    expect(res.statusCode).toBe(400);
-    expect((res.json() as { error: { code: string } }).error.code).toBe("VALIDATION_ERROR");
-  });
-
-  it("创建项目：coverImage 超长（>2048）返回 400", async () => {
-    const res = await createProject({ coverImage: `https://example.com/${"a".repeat(2100)}` });
-    expect(res.statusCode).toBe(400);
-  });
-
-  it("更新：PATCH coverImage 覆盖，显式 null 清空", async () => {
-    const created = await createProject({ coverImage: "https://example.com/a.webp" });
-    const id = (created.json() as { id: string }).id;
-
-    const upd = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/admin/projects/${id}`,
-      headers: auth(token),
-      payload: { coverImage: "https://example.com/b.webp" },
-    });
-    expect(upd.statusCode).toBe(200);
-    expect((upd.json() as { coverImage: string }).coverImage).toBe(
-      "https://example.com/b.webp",
-    );
-
-    const clear = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/admin/projects/${id}`,
-      headers: auth(token),
-      payload: { coverImage: null },
-    });
-    expect(clear.statusCode).toBe(200);
-    expect((clear.json() as { coverImage: string | null }).coverImage).toBeNull();
-  });
-
-  it("创建项目：携带元数据与技术栈，/technologies 可见", async () => {
-    const res = await createProject({
-      name: "含技术栈",
-      status: "published",
-      stars: 12,
-      role: "全栈",
-      projectStatus: "active",
-      startDate: "2024-01-01",
-      endDate: "2024-12-31",
-      technologies: ["Vue", "Node.js"],
-    });
-    expect(res.statusCode).toBe(201);
-    const body = res.json() as Record<string, unknown>;
-    expect(body.technologies).toEqual(["Vue", "Node.js"]);
-    expect(body.stars).toBe(12);
-    expect(body.projectStatus).toBe("active");
-
-    const techRes = await app.inject({ method: "GET", url: "/api/v1/technologies" });
-    const techBody = techRes.json() as { items: string[] };
-    expect(techBody.items).toContain("Vue");
-    expect(techBody.items).toContain("Node.js");
-  });
-
-  it("列表：分页字段 + 分页上限", async () => {
+  it("slug 冲突 → 409 CONFLICT（details 指到 slug 字段）", async () => {
+    await createProject(app, token, { name: "占位", slug: "taken-slug" });
     const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/admin/projects?page=1&pageSize=5",
-      headers: auth(token),
-    });
-    expect(res.statusCode).toBe(200);
-    const body = res.json() as {
-      items: Array<{ id: string }>;
-      page: number;
-      pageSize: number;
-      total: number;
-    };
-    expect(body.page).toBe(1);
-    expect(body.pageSize).toBe(5);
-    expect(body.total).toBeGreaterThanOrEqual(2);
-    expect(body.items.length).toBeLessThanOrEqual(5);
-    expect(body.items.length).toBeGreaterThan(0);
-  });
-
-  it("列表：status 过滤只返回对应状态", async () => {
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/admin/projects?status=published",
-      headers: auth(token),
-    });
-    const body = res.json() as { items: Array<{ status: string }> };
-    expect(body.items.length).toBeGreaterThan(0);
-    for (const item of body.items) {
-      expect(item.status).toBe("published");
-    }
-  });
-
-  it("列表：search 按名称模糊过滤", async () => {
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/admin/projects?search=博客",
-      headers: auth(token),
-    });
-    const body = res.json() as { items: Array<{ name: string }> };
-    expect(body.items.length).toBeGreaterThanOrEqual(1);
-    for (const item of body.items) {
-      expect(item.name).toContain("博客");
-    }
-  });
-
-  it("详情：包含 description/links/note 字段", async () => {
-    const created = await createProject({ name: "详情项目", description: "一段**Markdown**描述" });
-    const id = (created.json() as { id: string }).id;
-    const res = await app.inject({
-      method: "GET",
-      url: `/api/v1/admin/projects/${id}`,
-      headers: auth(token),
-    });
-    expect(res.statusCode).toBe(200);
-    const body = res.json() as Record<string, unknown>;
-    expect(body.description).toBe("一段**Markdown**描述");
-    expect(body.links).toEqual([]);
-    expect(body.note).toBeNull();
-  });
-
-  it("详情：不存在返回 404", async () => {
-    const res = await app.inject({
-      method: "GET",
-      url: "/api/v1/admin/projects/does-not-exist",
-      headers: auth(token),
-    });
-    expect(res.statusCode).toBe(404);
-    expect((res.json() as { error: { code: string } }).error.code).toBe("NOT_FOUND");
-  });
-
-  it("更新：改名 + 发布（status=published）", async () => {
-    const created = await createProject({ name: "待发布" });
-    const id = (created.json() as { id: string }).id;
-    const res = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/admin/projects/${id}`,
-      headers: auth(token),
-      payload: { name: "已发布", status: "published" },
-    });
-    expect(res.statusCode).toBe(200);
-    const body = res.json() as Record<string, unknown>;
-    expect(body.name).toBe("已发布");
-    expect(body.status).toBe("published");
-  });
-
-  it("更新：下架（status=archived）", async () => {
-    const created = await createProject({ name: "要下架", status: "published" });
-    const id = (created.json() as { id: string }).id;
-    const res = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/admin/projects/${id}`,
-      headers: auth(token),
-      payload: { status: "archived" },
-    });
-    expect((res.json() as { status: string }).status).toBe("archived");
-  });
-
-  it("状态机：draft→archived 跨级返回 400 INVALID_STATUS_TRANSITION", async () => {
-    const created = await createProject({ name: "跨级1" });
-    const id = (created.json() as { id: string }).id;
-    const res = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/admin/projects/${id}`,
-      headers: auth(token),
-      payload: { status: "archived" },
-    });
-    expect(res.statusCode).toBe(400);
-    expect((res.json() as { error: { code: string } }).error.code).toBe(
-      "INVALID_STATUS_TRANSITION",
-    );
-  });
-
-  it("状态机：published→draft 回退草稿返回 400", async () => {
-    const created = await createProject({ name: "回退", status: "published" });
-    const id = (created.json() as { id: string }).id;
-    const res = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/admin/projects/${id}`,
-      headers: auth(token),
-      payload: { status: "draft" },
-    });
-    expect(res.statusCode).toBe(400);
-    expect((res.json() as { error: { code: string } }).error.code).toBe(
-      "INVALID_STATUS_TRANSITION",
-    );
-  });
-
-  it("状态机：archived→published 重新上架返回 200", async () => {
-    const created = await createProject({ name: "重新上架", status: "published" });
-    const id = (created.json() as { id: string }).id;
-    await app.inject({
-      method: "PATCH",
-      url: `/api/v1/admin/projects/${id}`,
-      headers: auth(token),
-      payload: { status: "archived" },
-    });
-    const res = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/admin/projects/${id}`,
-      headers: auth(token),
-      payload: { status: "published" },
-    });
-    expect(res.statusCode).toBe(200);
-    expect((res.json() as { status: string }).status).toBe("published");
-  });
-
-  it("状态机：相同状态 no-op 不报错", async () => {
-    const created = await createProject({ name: "同名", status: "published" });
-    const id = (created.json() as { id: string }).id;
-    const res = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/admin/projects/${id}`,
-      headers: auth(token),
-      payload: { status: "published", tagline: "改个标签" },
-    });
-    expect(res.statusCode).toBe(200);
-    expect((res.json() as { tagline: string }).tagline).toBe("改个标签");
-  });
-
-  it("更新：技术栈全量替换", async () => {
-    const created = await createProject({ name: "换技术栈", technologies: ["Vue"] });
-    const id = (created.json() as { id: string }).id;
-    const res = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/admin/projects/${id}`,
-      headers: auth(token),
-      payload: { technologies: ["React"] },
-    });
-    expect((res.json() as { technologies: string[] }).technologies).toEqual(["React"]);
-  });
-
-  it("更新：不存在返回 404", async () => {
-    const res = await app.inject({
-      method: "PATCH",
-      url: "/api/v1/admin/projects/nope",
-      headers: auth(token),
-      payload: { name: "x" },
-    });
-    expect(res.statusCode).toBe(404);
-  });
-
-  it("软删除 + 列表默认隐藏 + includeDeleted 可见 + 恢复", async () => {
-    const created = await createProject({ name: "软删除项目" });
-    const id = (created.json() as { id: string }).id;
-
-    const del = await app.inject({
-      method: "DELETE",
-      url: `/api/v1/admin/projects/${id}`,
-      headers: auth(token),
-    });
-    expect(del.statusCode).toBe(204);
-
-    const defaultList = await app.inject({
-      method: "GET",
+      method: "POST",
       url: "/api/v1/admin/projects",
       headers: auth(token),
+      payload: { name: "撞车", slug: "taken-slug" },
     });
-    const defaultNames = (defaultList.json() as { items: Array<{ id: string }> }).items.map(
-      (i) => i.id,
-    );
-    expect(defaultNames).not.toContain(id);
+    expect(res.statusCode).toBe(409);
+    const body = res.json() as { error: { code: string; details: Array<{ field: string }> } };
+    expect(body.error.code).toBe("CONFLICT");
+    expect(body.error.details[0].field).toBe("slug");
+  });
 
-    const withDeleted = await app.inject({
+  it("slug 格式非法 / summary 超 60 字 / 年份非法 → 400 VALIDATION_ERROR", async () => {
+    const badSlug = await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/projects",
+      headers: auth(token),
+      payload: { name: "x", slug: "Bad_Slug" },
+    });
+    expect(badSlug.statusCode).toBe(400);
+    expect(badSlug.json().error.code).toBe("VALIDATION_ERROR");
+
+    const longSummary = await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/projects",
+      headers: auth(token),
+      payload: { name: "x", slug: "ok-slug", summary: "字".repeat(61) },
+    });
+    expect(longSummary.statusCode).toBe(400);
+
+    const badYear = await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/projects",
+      headers: auth(token),
+      payload: { name: "x", slug: "ok-slug-2", start_year: 20 },
+    });
+    expect(badYear.statusCode).toBe(400);
+  });
+
+  it("tech_stack 去重并保持顺序写入", async () => {
+    const created = await createProject(app, token, {
+      name: "技术栈",
+      tech_stack: ["Vue", "Node.js", "Vue", "Prisma"],
+    });
+    expect(created.tech_stack).toEqual(["Vue", "Node.js", "Prisma"]);
+  });
+});
+
+describe("PATCH /api/v1/admin/projects/:id", () => {
+  it("状态机：draft→published 合法；draft→archived 非法（400 INVALID_STATUS_TRANSITION）", async () => {
+    const project = await createProject(app, token, { name: "状态机" });
+
+    const illegal = await patch(project.id, { publish_status: "archived" });
+    expect(illegal.statusCode).toBe(400);
+    expect(illegal.json().error.code).toBe("INVALID_STATUS_TRANSITION");
+
+    const published = await patch(project.id, { publish_status: "published" });
+    expect(published.statusCode).toBe(200);
+    expect(published.json().published_at).not.toBeNull();
+
+    // v1.2 允许撤回：published → draft
+    const withdrawn = await patch(project.id, { publish_status: "draft" });
+    expect(withdrawn.statusCode).toBe(200);
+    expect(withdrawn.json().publish_status).toBe("draft");
+
+    // archived → published 合法
+    await patch(project.id, { publish_status: "published" });
+    const archived = await patch(project.id, { publish_status: "archived" });
+    expect(archived.statusCode).toBe(200);
+    const republished = await patch(project.id, { publish_status: "published" });
+    expect(republished.statusCode).toBe(200);
+  });
+
+  it("相同状态重复提交是 no-op（不报状态机错误）", async () => {
+    const project = await createProject(app, token, { name: "幂等", publish_status: "published" });
+    const res = await patch(project.id, { publish_status: "published" });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("progress 独立于 publish_status：草稿也能设 launched", async () => {
+    const project = await createProject(app, token, { name: "进展" });
+    const res = await patch(project.id, { progress: "launched" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().progress).toBe("launched");
+    expect(res.json().publish_status).toBe("draft");
+  });
+
+  it("从未发布过的草稿改名：不写 slug 别名", async () => {
+    const project = await createProject(app, token, { name: "草稿改名", slug: "draft-old" });
+    const res = await patch(project.id, { slug: "draft-new" });
+    expect(res.statusCode).toBe(200);
+
+    const aliases = await prisma.slugAlias.findMany({ where: { entity_type: "project" } });
+    expect(aliases).toHaveLength(0);
+  });
+
+  it("发布过的项目改名：写入别名，旧 slug 走 301", async () => {
+    const project = await createProject(app, token, { name: "发布改名", slug: "pub-old", publish_status: "published" });
+    await patch(project.id, { slug: "pub-new" });
+
+    const alias = await prisma.slugAlias.findFirst({
+      where: { entity_type: "project", slug: "pub-old" },
+    });
+    expect(alias?.entity_id).toBe(project.id);
+
+    const res = await app.inject({ method: "GET", url: "/api/v1/projects/pub-old" });
+    expect(res.statusCode).toBe(301);
+    expect(res.headers.location).toBe("/api/v1/projects/pub-new");
+  });
+
+  it("改名为已被占用的 slug → 409，且原名不变", async () => {
+    await createProject(app, token, { name: "已占用", slug: "occupied" });
+    const project = await createProject(app, token, { name: "想改名", slug: "want-rename" });
+
+    const res = await patch(project.id, { slug: "occupied" });
+    expect(res.statusCode).toBe(409);
+
+    const after = await get(project.id);
+    expect(after.json().slug).toBe("want-rename");
+  });
+
+  it("显式 null 清空 nullable 字段", async () => {
+    const project = await createProject(app, token, {
+      name: "清空",
+      role: "全栈",
+      start_year: 2020,
+      cover_image_url: "https://e.com/a.png",
+    });
+    const res = await patch(project.id, { role: null, start_year: null, cover_image_url: null });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().role).toBeNull();
+    expect(res.json().start_year).toBeNull();
+    expect(res.json().cover_image_url).toBeNull();
+  });
+
+  it("tech_stack 传数组即整体替换（[] 清空）", async () => {
+    const project = await createProject(app, token, { name: "替换", tech_stack: ["Vue", "Node.js"] });
+    const replaced = await patch(project.id, { tech_stack: ["Fastify"] });
+    expect(replaced.json().tech_stack).toEqual(["Fastify"]);
+
+    const cleared = await patch(project.id, { tech_stack: [] });
+    expect(cleared.json().tech_stack).toEqual([]);
+  });
+
+  it("不存在的项目 → 404", async () => {
+    const res = await patch("no-such-id", { name: "x" });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe("NOT_FOUND");
+  });
+});
+
+describe("PUT /api/v1/admin/projects/:id/metadata", () => {
+  const put = (id: string, payload: unknown) =>
+    app.inject({ method: "PUT", url: `/api/v1/admin/projects/${id}/metadata`, headers: auth(token), payload });
+
+  it("整体替换：第二次提交覆盖第一次，顺序按 sort", async () => {
+    const project = await createProject(app, token, { name: "元数据" });
+    const first = await put(project.id, [{ key_label: "A", value: "1" }]);
+    expect(first.json().metadata).toEqual([{ key_label: "A", value: "1", sort: 0 }]);
+
+    const second = await put(project.id, [
+      { key_label: "B", value: "2", sort: 1 },
+      { key_label: "C", value: "3", sort: 0 },
+    ]);
+    const labels = (second.json().metadata as Array<{ key_label: string }>).map((m) => m.key_label);
+    expect(labels).toEqual(["C", "B"]);
+  });
+
+  it("键名重复 → 400（不落到数据库 409）", async () => {
+    const project = await createProject(app, token, { name: "重复键" });
+    const res = await put(project.id, [
+      { key_label: "重复", value: "1" },
+      { key_label: "重复", value: "2" },
+    ]);
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("空数组清空全部元数据", async () => {
+    const project = await createProject(app, token, { name: "清空元数据" });
+    await put(project.id, [{ key_label: "A", value: "1" }]);
+    const res = await put(project.id, []);
+    expect(res.json().metadata).toEqual([]);
+  });
+});
+
+describe("DELETE /api/v1/admin/projects/:id 与 restore", () => {
+  it("软删除：前台不可见、后台默认列表隐藏，includeDeleted 可见", async () => {
+    const project = await createProject(app, token, { name: "待删除", publish_status: "published" });
+    const del = await app.inject({ method: "DELETE", url: `/api/v1/admin/projects/${project.id}`, headers: auth(token) });
+    expect(del.statusCode).toBe(200);
+    expect(del.json().deleted_at).toMatch(/^\d{4}-/);
+
+    const publicDetail = await app.inject({ method: "GET", url: `/api/v1/projects/${project.slug}` });
+    expect(publicDetail.statusCode).toBe(404);
+
+    const hidden = await app.inject({ method: "GET", url: "/api/v1/admin/projects", headers: auth(token) });
+    expect(hidden.json().items).toHaveLength(0);
+
+    const shown = await app.inject({
       method: "GET",
       url: "/api/v1/admin/projects?includeDeleted=true",
       headers: auth(token),
     });
-    const deletedItem = (withDeleted.json() as { items: Array<{ id: string; deletedAt: string | null }> }).items.find(
-      (i) => i.id === id,
-    );
-    expect(deletedItem).toBeDefined();
-    expect(deletedItem?.deletedAt).not.toBeNull();
-
-    const restore = await app.inject({
-      method: "POST",
-      url: `/api/v1/admin/projects/${id}/restore`,
-      headers: auth(token),
-    });
-    expect(restore.statusCode).toBe(200);
-    expect((restore.json() as { deletedAt: string | null }).deletedAt).toBeNull();
+    expect(shown.json().items).toHaveLength(1);
   });
 
-  it("软删除不存在的项目返回 404", async () => {
+  it("重复删除幂等（deleted_at 不变）", async () => {
+    const project = await createProject(app, token, { name: "幂等删除" });
+    const first = await app.inject({ method: "DELETE", url: `/api/v1/admin/projects/${project.id}`, headers: auth(token) });
+    const second = await app.inject({ method: "DELETE", url: `/api/v1/admin/projects/${project.id}`, headers: auth(token) });
+    expect(second.statusCode).toBe(200);
+    expect(second.json().deleted_at).toBe(first.json().deleted_at);
+  });
+
+  it("restore 恢复后前台重新可见", async () => {
+    const project = await createProject(app, token, { name: "恢复", publish_status: "published" });
+    await app.inject({ method: "DELETE", url: `/api/v1/admin/projects/${project.id}`, headers: auth(token) });
     const res = await app.inject({
-      method: "DELETE",
-      url: "/api/v1/admin/projects/ghost",
+      method: "POST",
+      url: `/api/v1/admin/projects/${project.id}/restore`,
       headers: auth(token),
     });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().deleted_at).toBeNull();
+
+    const publicDetail = await app.inject({ method: "GET", url: `/api/v1/projects/${project.slug}` });
+    expect(publicDetail.statusCode).toBe(200);
+  });
+
+  it("删除不存在的项目 → 404", async () => {
+    const res = await app.inject({ method: "DELETE", url: "/api/v1/admin/projects/nope", headers: auth(token) });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("GET /api/v1/admin/projects（后台列表）", () => {
+  it("默认包含 draft/archived，可按 publish_status / progress / search 过滤", async () => {
+    await createProject(app, token, { name: "草稿清单" });
+    await createProject(app, token, { name: "发布清单", publish_status: "published", progress: "launched" });
+    await createProject(app, token, { name: "归档清单", publish_status: "archived" });
+
+    const all = await app.inject({ method: "GET", url: "/api/v1/admin/projects", headers: auth(token) });
+    expect(all.json().total).toBe(3);
+
+    const published = await app.inject({
+      method: "GET",
+      url: "/api/v1/admin/projects?publish_status=published",
+      headers: auth(token),
+    });
+    expect(published.json().items.map((i: { name: string }) => i.name)).toEqual(["发布清单"]);
+
+    const launched = await app.inject({
+      method: "GET",
+      url: "/api/v1/admin/projects?progress=launched",
+      headers: auth(token),
+    });
+    expect(launched.json().total).toBe(1);
+
+    const searched = await app.inject({
+      method: "GET",
+      url: "/api/v1/admin/projects?search=归档",
+      headers: auth(token),
+    });
+    expect(searched.json().items.map((i: { name: string }) => i.name)).toEqual(["归档清单"]);
+  });
+
+  it("后台列表项带 publish_status / published_at / deleted_at", async () => {
+    await createProject(app, token, { name: "后台字段", publish_status: "published" });
+    const res = await app.inject({ method: "GET", url: "/api/v1/admin/projects", headers: auth(token) });
+    const item = (res.json().items as Array<Record<string, unknown>>)[0];
+    expect(item.publish_status).toBe("published");
+    expect(item.published_at).not.toBeNull();
+    expect(item.deleted_at).toBeNull();
+  });
+
+  it("未带 Bearer → 401", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/v1/admin/projects" });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe("GET /api/v1/admin/projects/:id", () => {
+  it("详情含全部笔记（含草稿）与 cover_source_url", async () => {
+    const project = await createProject(app, token, { name: "后台详情" });
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/notes",
+      headers: auth(token),
+      payload: { project_id: project.id, slug: "n-draft", title: "草稿笔记", body_md: "x" },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/admin/notes",
+      headers: auth(token),
+      payload: { project_id: project.id, slug: "n-pub", title: "发布笔记", body_md: "x", publish_status: "published" },
+    });
+
+    const res = await get(project.id);
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { notes: Array<{ title: string }>; cover_source_url: string | null };
+    expect(body.notes).toHaveLength(2);
+    expect(body.cover_source_url).toBeNull();
+  });
+
+  it("不存在 → 404", async () => {
+    const res = await get("nope");
     expect(res.statusCode).toBe(404);
   });
 });

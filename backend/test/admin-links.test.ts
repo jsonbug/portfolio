@@ -1,13 +1,13 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+// 后台链接接口：v1.2 类型枚举（website → site）、http/https 校验、sort 追加、增删改
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
-import { auth, getToken, wipeDb } from "./helpers.js";
+import { auth, createProject, getToken, wipeDb } from "./helpers.js";
 
 let app: FastifyInstance;
 let token: string;
 
 beforeAll(async () => {
-  await wipeDb();
   app = buildApp();
   token = await getToken(app);
 });
@@ -16,131 +16,127 @@ afterAll(async () => {
   await app.close();
 });
 
-async function createProject(): Promise<string> {
-  const res = await app.inject({
+beforeEach(async () => {
+  await wipeDb();
+});
+
+const addLink = (projectId: string, payload: Record<string, unknown>) =>
+  app.inject({
     method: "POST",
-    url: "/api/v1/admin/projects",
+    url: `/api/v1/admin/projects/${projectId}/links`,
     headers: auth(token),
-    payload: { name: "链接项目" },
-  });
-  return (res.json() as { id: string }).id;
-}
-
-describe("2.4 链接管理", () => {
-  it("添加链接 → 201，出现在项目详情", async () => {
-    const projectId = await createProject();
-    const res = await app.inject({
-      method: "POST",
-      url: `/api/v1/admin/projects/${projectId}/links`,
-      headers: auth(token),
-      payload: { type: "repo", label: "GitHub", url: "https://github.com/jsonbug/multica-demo" },
-    });
-    expect(res.statusCode).toBe(201);
-    const body = res.json() as Record<string, unknown>;
-    expect(body.type).toBe("repo");
-    expect(body.url).toBe("https://github.com/jsonbug/multica-demo");
-
-    const detail = await app.inject({
-      method: "GET",
-      url: `/api/v1/admin/projects/${projectId}`,
-      headers: auth(token),
-    });
-    const links = (detail.json() as { links: Array<{ id: string }> }).links;
-    expect(links).toHaveLength(1);
-    expect(links[0]?.id).toBe(body.id);
+    payload,
   });
 
-  it("添加链接：非法 url 返回 400", async () => {
-    const projectId = await createProject();
-    const res = await app.inject({
-      method: "POST",
-      url: `/api/v1/admin/projects/${projectId}/links`,
-      headers: auth(token),
-      payload: { type: "repo", url: "not-a-url" },
+describe("POST /api/v1/admin/projects/:id/links", () => {
+  it("新增链接：sort 缺省追加到末尾，健康检查字段初始为 null", async () => {
+    const p = await createProject(app, token, { name: "链接项目" });
+    const first = await addLink(p.id, { type: "repo", url: "https://github.com/a/b", label: "GitHub" });
+    expect(first.statusCode).toBe(201);
+    expect(first.json()).toMatchObject({
+      type: "repo",
+      label: "GitHub",
+      sort: 0,
+      last_status: null,
+      last_http_status: null,
+      last_checked_at: null,
     });
-    expect(res.statusCode).toBe(400);
-    expect((res.json() as { error: { code: string } }).error.code).toBe("VALIDATION_ERROR");
+
+    const second = await addLink(p.id, { type: "site", url: "https://a.example.com" });
+    expect(second.json().sort).toBe(1);
   });
 
-  it("添加链接：非 http/https 协议（ftp/mailto）返回 400", async () => {
-    const projectId = await createProject();
-    for (const bad of ["ftp://example.com", "mailto:a@b.com", "javascript:alert(1)"]) {
-      const res = await app.inject({
-        method: "POST",
-        url: `/api/v1/admin/projects/${projectId}/links`,
-        headers: auth(token),
-        payload: { type: "other", url: bad },
-      });
+  it("v1.2 类型枚举：接受 repo/site/docs/demo/other，拒绝旧值 website → 400", async () => {
+    const p = await createProject(app, token, { name: "类型" });
+
+    for (const type of ["repo", "site", "docs", "demo", "other"]) {
+      const res = await addLink(p.id, { type, url: "https://e.com" });
+      expect(res.statusCode).toBe(201);
+    }
+
+    const legacy = await addLink(p.id, { type: "website", url: "https://e.com" });
+    expect(legacy.statusCode).toBe(400);
+    expect(legacy.json().error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("非 http/https 链接 → 400", async () => {
+    const p = await createProject(app, token, { name: "协议" });
+    for (const url of ["ftp://e.com/x", "mailto:a@b.com", "javascript:alert(1)", "not-a-url"]) {
+      const res = await addLink(p.id, { type: "other", url });
       expect(res.statusCode).toBe(400);
-      expect((res.json() as { error: { code: string } }).error.code).toBe("VALIDATION_ERROR");
     }
   });
 
-  it("添加链接：项目不存在返回 404", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/api/v1/admin/projects/ghost/links",
-      headers: auth(token),
-      payload: { type: "other", url: "https://example.com" },
-    });
+  it("项目不存在 → 404", async () => {
+    const res = await addLink("no-such-project", { type: "repo", url: "https://e.com" });
     expect(res.statusCode).toBe(404);
   });
 
-  it("更新链接：改类型与标签", async () => {
-    const projectId = await createProject();
-    const created = await app.inject({
+  it("未鉴权 → 401", async () => {
+    const p = await createProject(app, token, { name: "鉴权" });
+    const res = await app.inject({
       method: "POST",
-      url: `/api/v1/admin/projects/${projectId}/links`,
-      headers: auth(token),
-      payload: { type: "other", url: "https://example.com" },
+      url: `/api/v1/admin/projects/${p.id}/links`,
+      payload: { type: "repo", url: "https://e.com" },
     });
-    const id = (created.json() as { id: string }).id;
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe("PATCH / DELETE /api/v1/admin/links/:id", () => {
+  it("更新类型/标签/url/sort", async () => {
+    const p = await createProject(app, token, { name: "更新" });
+    const link = (await addLink(p.id, { type: "repo", url: "https://e.com/a" })).json() as { id: string };
 
     const res = await app.inject({
       method: "PATCH",
-      url: `/api/v1/admin/links/${id}`,
+      url: `/api/v1/admin/links/${link.id}`,
       headers: auth(token),
-      payload: { type: "website", label: "官网" },
+      payload: { type: "demo", label: "在线演示", sort: 5 },
     });
     expect(res.statusCode).toBe(200);
-    const body = res.json() as Record<string, unknown>;
-    expect(body.type).toBe("website");
-    expect(body.label).toBe("官网");
-    expect(body.url).toBe("https://example.com");
+    expect(res.json()).toMatchObject({ type: "demo", label: "在线演示", sort: 5, url: "https://e.com/a" });
   });
 
-  it("更新不存在链接返回 404", async () => {
-    const res = await app.inject({
+  it("更新为非法类型/url → 400", async () => {
+    const p = await createProject(app, token, { name: "更新非法" });
+    const link = (await addLink(p.id, { type: "repo", url: "https://e.com" })).json() as { id: string };
+
+    const badType = await app.inject({
       method: "PATCH",
-      url: "/api/v1/admin/links/ghost",
+      url: `/api/v1/admin/links/${link.id}`,
       headers: auth(token),
       payload: { type: "website" },
     });
-    expect(res.statusCode).toBe(404);
+    expect(badType.statusCode).toBe(400);
+
+    const badUrl = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/admin/links/${link.id}`,
+      headers: auth(token),
+      payload: { url: "ftp://e.com" },
+    });
+    expect(badUrl.statusCode).toBe(400);
   });
 
-  it("删除链接 → 204，详情不再包含", async () => {
-    const projectId = await createProject();
-    const created = await app.inject({
-      method: "POST",
-      url: `/api/v1/admin/projects/${projectId}/links`,
-      headers: auth(token),
-      payload: { type: "demo", url: "https://demo.example.com" },
-    });
-    const id = (created.json() as { id: string }).id;
+  it("删除：204，重复删除 404", async () => {
+    const p = await createProject(app, token, { name: "删除" });
+    const link = (await addLink(p.id, { type: "repo", url: "https://e.com" })).json() as { id: string };
 
-    const del = await app.inject({
-      method: "DELETE",
-      url: `/api/v1/admin/links/${id}`,
-      headers: auth(token),
-    });
-    expect(del.statusCode).toBe(204);
+    const first = await app.inject({ method: "DELETE", url: `/api/v1/admin/links/${link.id}`, headers: auth(token) });
+    expect(first.statusCode).toBe(204);
 
-    const detail = await app.inject({
-      method: "GET",
-      url: `/api/v1/admin/projects/${projectId}`,
-      headers: auth(token),
-    });
-    expect((detail.json() as { links: unknown[] }).links).toHaveLength(0);
+    const second = await app.inject({ method: "DELETE", url: `/api/v1/admin/links/${link.id}`, headers: auth(token) });
+    expect(second.statusCode).toBe(404);
+  });
+
+  it("链接只出现在所属项目详情里，且公开详情不含健康检查以外的后台字段", async () => {
+    const p = await createProject(app, token, { name: "公开链接", publish_status: "published" });
+    await addLink(p.id, { type: "site", url: "https://demo.example.com", label: "官网" });
+
+    const detail = await app.inject({ method: "GET", url: `/api/v1/projects/${p.slug}` });
+    const links = detail.json().links as Array<Record<string, unknown>>;
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ type: "site", label: "官网", url: "https://demo.example.com" });
   });
 });
