@@ -1,6 +1,6 @@
 # API 契约（冻结 · v1.2）
 
-> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1；v1.2.2 补链接健康检查 §4.4 与两套 counts 对称口径；v1.2.3 补分页越界、`details[].code`、`NoteSummary.excerpt` 三处条文，见 1.4；v1.2.4 把信封层 `error.code` 值域归位到 1.3 并校正 1.4 第 2 条的 `code` 来源措辞；v1.2.5 按 compose 冒烟实测补 4.1 的子资源条文；v1.2.6 补项目截图与元数据 `kind` 条文，见 4.1.1）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
+> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1；v1.2.2 补链接健康检查 §4.4 与两套 counts 对称口径；v1.2.3 补分页越界、`details[].code`、`NoteSummary.excerpt` 三处条文，见 1.4；v1.2.4 把信封层 `error.code` 值域归位到 1.3 并校正 1.4 第 2 条的 `code` 来源措辞；v1.2.5 按 compose 冒烟实测补 4.1 的子资源条文；v1.2.6 补项目截图与元数据 `kind` 条文，见 4.1.1；v1.2.7 把 `METHOD_NOT_ALLOWED` 标为保留值并冻结「未知方法 404」、明确 `details[].code` 结构必带）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
 > 代码参考（可执行形态）：`backend/src/contract/schemas.ts`；本文档与 `schemas.ts` 是同一契约的两种载体，
 > 任何改动都是契约变更，需在 issue 中说明。
 >
@@ -46,7 +46,7 @@
 }
 ```
 
-> `details[].code` 的来源与「不得依赖」口径见 1.4 第 2 条；**信封层 `error.code` 相反，是客户端唯一允许分支的字段，值域以 1.3 为唯一出处**。
+> `details[].code` 的来源、结构必带与「可展示不可分支」口径见 1.4 第 2 条；**信封层 `error.code` 相反，是客户端唯一允许分支的字段，值域以 1.3 为唯一出处**。
 
 **信封层 `error.code` 值域（v1.2.4 冻结）**
 
@@ -58,7 +58,9 @@
 
 本节是**信封层 `error.code` 值域的唯一出处**（v1.2.4 明确）：**8 个取值全部冻结**，实现侧对应 `backend/src/lib/errors.ts` 的 `ErrorCode` 联合类型与 `errorStatusMap`，两处一致才视为契约未漂。
 
-> 实现现状：`FORBIDDEN` 当前无业务路径产生（单管理员模型，保留位）；`METHOD_NOT_ALLOWED` 由框架 405 兜底产生（`backend/src/app.ts` 错误处理器），业务代码不主动抛。
+> 实现现状：`FORBIDDEN` 与 `METHOD_NOT_ALLOWED` 都是**保留值、当前实现不产生**。`FORBIDDEN`：单管理员模型无多角色。`METHOD_NOT_ALLOWED`（v1.2.7 定论）：**不开启框架 405**——未知方法实测返回 **404 `NOT_FOUND`**（`PUT /api/v1/projects` 实测），理由是让每个路径枚举方法会把暴露维度从「路径存在与否」扩到「路径存在但方法不对」，而客户端拿到的信息量提升近零。两者映射的 HTTP 状态仍保留在 `errorStatusMap` 里，但**业务与框架均不生产**；将来若产生，属契约变更。
+
+**冻结行为**：未知方法 → 404 `NOT_FOUND`（不是 405），由 `backend/src/routes/` 侧测试钉住，谁「顺手开启 405」会直接变红。
 
 | code | HTTP | 触发场景 |
 |---|---|---|
@@ -68,7 +70,7 @@
 | `NOT_FOUND` | 404 | 资源不存在；**草稿/归档/软删除项目对前台一律 404，不泄露存在性** |
 | `CONFLICT` | 409 | 唯一键冲突（slug 被占用） |
 | `INVALID_STATUS_TRANSITION` | 400 | 曝光状态迁移不合法（如 `draft` → `archived`） |
-| `METHOD_NOT_ALLOWED` | 405 | 方法不支持 |
+| `METHOD_NOT_ALLOWED` | 405 | **保留值，当前实现不产生**：未知方法实测 404 `NOT_FOUND`（见上） |
 | `INTERNAL_ERROR` | 500 | 未预期错误（日志含 requestId，响应不回传堆栈） |
 
 ### 1.4 分页越界、错误体细节与摘要字段（v1.2.3 冻结）
@@ -87,12 +89,14 @@
 判定顺序：**先校验格式与范围（400），再执行查询、判定是否越界（200 空页）**。
 两条规则适用于**全部列表端点**（`/projects`、`/notes`、`/admin/projects`、`/admin/notes`），不因端点而异。
 
-**2. `details[]`：结构保留，`code` 不承诺稳定**
+**2. `details[]`：结构必带，`code` 值不承诺稳定**
 
-- `details[]` 结构保留（`field` / `code` / `message`）。
-- `code` 的来源有两类：**zod issue code**（如 `too_big` / `invalid_type`）与**非 zod 路径手写的实现标识**（如 409 的 `conflict`、400 的 `invalid_transition`）。两类都**不承诺稳定，客户端不得分支**（`$ grep` 可验）。
-- 因此不得把「`code` 等于某个具体值」写进 mock、测试断言或组件分支（v1.2.4 校正：原措辞「透传 zod issue code」与实现不符，409/状态迁移两处详情是手写标识，见 `backend/src/routes/admin/projects.ts` 与 `admin/notes.ts`）。
+- `details[]` 结构 **必带三个键**（`field` / `code` / `message`）：**任何一侧都不得省掉 `code`**（包括 mock）——结构偏离契约的代价高于「有人可能按 `code` 分支」（v1.2.7 明确：mock 保留 `code`，靠评审与本节守「不得分支」，不靠删数据）。
+- `code` 的来源有两类：**zod issue code**（如 `too_big` / `invalid_type`）与**非 zod 路径手写的实现标识**（如 409 的 `conflict`、400 的 `invalid_transition`）。两类都**不承诺稳定**。
+- 客户端的边界是**可展示、不可分支**：允许把 `details[].code` 原文展示出来（排查用），**不得**对它取等分支；也不得把「`code` 等于某个具体值」写进 mock、测试断言或组件分支（`$ grep` 可验）。
+- 因此不得把「`code` 透传 zod issue code」当成实现义务（v1.2.4 校正：原措辞与实现不符，409/状态迁移两处详情是手写标识，见 `backend/src/routes/admin/projects.ts` 与 `admin/notes.ts`）。
 - 客户端只允许依赖封套的 `error.code`（见 1.3）判类型；`details[].message` 仅用于直接展示，不参与任何分支判断。
+- 可验证：契约测试比对两侧错误体的 **`Object.keys(details[0]).sort()`**，mock 与真实后端的键集合必须相同（这是「错误体同构」的证据）。
 
 **3. `excerpt`：`NoteSummary` 必带字段**
 
@@ -384,7 +388,9 @@ draft ──publish──▶ published ──archive──▶ archived
 - `metric` 上限：**≤2 条**（第 3 条 → 400）、`key_label` ≤16 字、`value` ≤12 字；`meta` 沿用 50 / 500（见 4.1）。
 - 超限一律 400，`details` 逐项中文说明（含当前值与上限），**metric 按条数判、整批 400，不静默截断**。
 
-**副作用**：任一次成功的截图 / 元数据替换都 **bump 项目 `updated_at`**（含传 `[]` 清空）——前台 recent 排序必须能看出内容变更。
+**副作用**：任一次成功的截图 / 元数据替换都 **bump 项目 `updated_at`**（含传 `[]` 清空）——后台「保存了一下」也算一次内容变更。
+
+**可观察后果（别当 bug 报）**：3.1 的 `sort=recent` 用 `last_updated_at ?? updated_at`（`backend/src/routes/projects.ts`），所以**没手填 `last_updated_at`** 的项目会因为一次空 PUT（如传 `[]` 清空）而在 recent 里提前；填了 `last_updated_at` 的项目不受影响。这是「保存即更新」的可接受语义。
 
 ### 4.4 链接健康检查（B16，v1.2.2 新增）
 
@@ -477,6 +483,7 @@ IPv4 映射（`::ffff:`）、NAT64、6to4 里嵌入的 IPv4 同样按上述规�
 | v1.2.1 | ALICE-8 冻结核对：后台 `counts`、后台详情笔记 `publish_status`、排序空值、search 字段、login 公开性、slug 命名空间、snake_case、Markdown 责任；补预留端点表 |
 | v1.2.2 | B16 链接健康检查落地：`last_status` 改为 `ok`/`failed`/`unknown`（原 `null` 不再出现）、判定与超时口径、SSRF 防护、`POST /admin/links/:id/check`（见 4.4）；两套 `counts` 对称口径写明；`/notes` 超 100 篇截断提示 |
 | v1.2.3 | 补三处此前只有实现没有条文的细节（见 1.4）：① 分页 `page > totalPages` 返回 200 + `items: []` + 真 `total` / `totalPages`，格式与范围错误仍 400，两条语义适用于全部列表端点；② `details[]` 结构保留、`code` 不承诺稳定、客户端不得分支（`code` 来源措辞由 v1.2.4 校正）；③ `NoteSummary.excerpt`（去 Markdown 取前 120 字、超长加省略号、空正文 `null`）为必带字段。同版登记：条文与 `backend/src/contract/schemas.ts` 成对维护、`search` 字面量匹配通则（见 3.7） |
-| v1.2.4 | 信封层 `error.code` 值域归位：1.3 明确为唯一出处且 8 个值全冻结（FORBIDDEN 为保留位、METHOD_NOT_ALLOWED 由框架 405 产生），1.2 增加值域段并规定「只允许对 `error.code` 分支、`code` 与状态冲突时以 `code` 为准」；同时校正 1.4 第 2 条的 `code` 来源措辞——不限于 zod issue code，`conflict` / `invalid_transition` 等手写标识同样存在且同样不得依赖 |
+| v1.2.4 | 信封层 `error.code` 值域归位：1.3 明确为唯一出处且 8 个值全冻结（FORBIDDEN 为保留位、METHOD_NOT_ALLOWED 当时记为「由框架 405 产生」——该判断由 v1.2.7 更正为保留值），1.2 增加值域段并规定「只允许对 `error.code` 分支、`code` 与状态冲突时以 `code` 为准」；同时校正 1.4 第 2 条的 `code` 来源措辞——不限于 zod issue code，`conflict` / `invalid_transition` 等手写标识同样存在且同样不得依赖 |
 | v1.2.5 | compose 部署冒烟实测发现：建项目 body **不含** `links`/`metadata`（多余键被忽略而非报错），补 4.1「链接与元数据是独立资源」与 `POST /admin/projects/:id/links` / `PATCH|DELETE /admin/links/:id` 行；元数据 body 明确为裸数组、键名字段 `key_label`。**纯条文补正，无实现变更** |
 | v1.2.6 | 项目截图与元数据 `kind` 落条文（见 3.2、4.1.1）：`screenshots[]` 形状与 `PUT /admin/projects/:id/screenshots` 整体替换（≤10 张、`http(s)`、`caption` ≤80 且空白归一 `null`）、`metadata[].kind` 三路径必带、metric ≤2 / ≤16 / ≤12 与 meta 50 / 500、替换 bump `updated_at`、URL 只存原图且截图不进列表。三条实现期假设固定为契约措辞：`sort` 可重复（客户端不得假设唯一，同值保持数组序）、`caption` 空白归一 `null`（wire 上不出现空串，客户端不必处理 `""`）、metric 按条数判且超限整批 400 不静默截断。**纯条文补正，无实现变更** |
+| v1.2.7 | ① 1.3 把 `METHOD_NOT_ALLOWED` 标为**保留值、当前实现不产生**，删掉「由框架 405 产生」，并冻结行为「未知方法 → 404 `NOT_FOUND`」（不开启框架 405，避免暴露「路径存在但方法不对」这一维度）；② 1.4 第 2 条改为「结构必带、值不承诺稳定」：`field`/`code`/`message` 三键任何一侧都不得省略（含 mock），客户端**可展示不可分支**，可验证项为两侧 `Object.keys(details[0]).sort()` 相同；③ 4.1.1 补「传 `[]` 清空也算一次内容变更」的可观察后果（未填 `last_updated_at` 的项目会在 recent 提前）。**纯条文补正，无实现变更** |
