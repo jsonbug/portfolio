@@ -20,20 +20,35 @@ function renderList() {
   return render(ProjectListView, { global: { plugins: [pinia, router] } })
 }
 
-async function findRow(name: string): Promise<HTMLElement> {
-  const rows = await screen.findAllByRole('row')
+async function findRow(name: string): Promise<HTMLElement> {  const rows = await screen.findAllByRole('row')
   const row = rows.find((tr) => within(tr).queryByText(name) !== null)
   expect(row, `未找到项目行「${name}」`).toBeTruthy()
   return row as HTMLElement
 }
 
 describe('ProjectListView', () => {
+  const originalInnerWidth = window.innerWidth
+
+  async function setWidth(width: number) {
+    window.innerWidth = width
+    window.dispatchEvent(new Event('resize'))
+    await waitFor(() => expect(window.innerWidth).toBe(width))
+  }
+
+  function headers(): string[] {
+    return screen
+      .getAllByRole('columnheader')
+      .map((th) => th.textContent?.trim() ?? '')
+      .filter((text) => text !== '')
+  }
+
   beforeEach(() => {
     localStorage.setItem(AUTH_TOKEN_KEY, 'mock-token-test')
     resetMockDb()
   })
 
   afterEach(() => {
+    window.innerWidth = originalInnerWidth
     localStorage.clear()
     vi.restoreAllMocks()
   })
@@ -149,5 +164,55 @@ describe('ProjectListView', () => {
       expect(within(deletedRow).getByText('已删除')).toBeInTheDocument()
       expect(within(deletedRow).getByRole('button', { name: '恢复' })).toBeInTheDocument()
     })
+  })
+
+  it('767 隐最右一列「操作」，768 恢复且仍在最右', async () => {
+    renderList()
+    await screen.findByText('项目展示平台')
+    expect(headers()).toEqual(['名称', 'slug', '发布状态', '进展', '链接', '更新时间', '操作'])
+
+    await setWidth(767)
+    await waitFor(() =>
+      expect(headers()).toEqual(['名称', 'slug', '发布状态', '进展', '链接', '更新时间']),
+    )
+
+    await setWidth(768)
+    await waitFor(() =>
+      expect(headers()).toEqual(['名称', 'slug', '发布状态', '进展', '链接', '更新时间', '操作']),
+    )
+  })
+
+  it('逐级变窄按优先级依次隐藏：操作 → 更新时间 → 进展 → slug', async () => {
+    renderList()
+    await screen.findByText('项目展示平台')
+
+    await setWidth(639)
+    await waitFor(() =>
+      expect(headers()).toEqual(['名称', 'slug', '发布状态', '进展', '链接']),
+    )
+
+    await setWidth(511)
+    await waitFor(() => expect(headers()).toEqual(['名称', 'slug', '发布状态', '链接']))
+
+    await setWidth(383)
+    await waitFor(() => expect(headers()).toEqual(['名称', '发布状态', '链接']))
+  })
+
+  it('隐藏列只做减法，列序不重排；恒显列到 0 宽也在', async () => {
+    renderList()
+    await screen.findByText('项目展示平台')
+    const narrow = await (async () => {
+      await setWidth(320)
+      await waitFor(() => expect(headers()).toEqual(['名称', '发布状态', '链接']))
+      return headers()
+    })()
+
+    await setWidth(1440)
+    const wide = await (async () => {
+      await waitFor(() => expect(headers()).toHaveLength(7))
+      return headers()
+    })()
+
+    expect(wide.filter((label) => narrow.includes(label))).toEqual(narrow)
   })
 })
