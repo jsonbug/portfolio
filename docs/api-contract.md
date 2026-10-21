@@ -1,6 +1,6 @@
 # API 契约（冻结 · v1.2）
 
-> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1；v1.2.2 补链接健康检查 §4.4 与两套 counts 对称口径；v1.2.3 补分页越界、`details[].code`、`NoteSummary.excerpt` 三处条文，见 1.4；v1.2.4 把信封层 `error.code` 值域归位到 1.3 并校正 1.4 第 2 条的 `code` 来源措辞；v1.2.5 按 compose 冒烟实测补 4.1 的子资源条文；v1.2.6 补项目截图与元数据 `kind` 条文，见 4.1.1；v1.2.7 把 `METHOD_NOT_ALLOWED` 标为保留值并冻结「未知方法 404」、明确 `details[].code` 结构必带）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
+> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1；v1.2.2 补链接健康检查 §4.4 与两套 counts 对称口径；v1.2.3 补分页越界、`details[].code`、`NoteSummary.excerpt` 三处条文，见 1.4；v1.2.4 把信封层 `error.code` 值域归位到 1.3 并校正 1.4 第 2 条的 `code` 来源措辞；v1.2.5 按 compose 冒烟实测补 4.1 的子资源条文；v1.2.6 补项目截图与元数据 `kind` 条文，见 4.1.1；v1.2.7 把 `METHOD_NOT_ALLOWED` 标为保留值并冻结「未知方法 404」、明确 `details[].code` 结构必带；v1.2.8 把截图 `url` 校验收紧为「带 host 的绝对 URL、不含空白」）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
 > 代码参考（可执行形态）：`backend/src/contract/schemas.ts`；本文档与 `schemas.ts` 是同一契约的两种载体，
 > 任何改动都是契约变更，需在 issue 中说明。
 >
@@ -375,7 +375,10 @@ draft ──publish──▶ published ──archive──▶ archived
 
 - **整体替换**：未出现在数组里的行被删除；`sort` 缺省用数组下标；`[]` = 清空。
 - **校验**（全部走既有 400 `VALIDATION_ERROR` + `details[{path,message}]`，**不新增错误码**）：
-  - `url` 必填，≤2048 且必须 `http(s)://`——`javascript:` / `data:` / 相对路径 / `ftp:` 一律 400。
+  - `url` 必填，≤2048，且必须能解析为**带 host 的绝对 URL**、不含空白字符（v1.2.8 收紧）：
+    - `javascript:` / `data:` / 相对路径 / `ftp:` → 400；
+    - 仅有 scheme（`https://`）、空 host、含空白的地址（如 `http://e.com/a b.png`）→ 400。
+    - `http(s)://` 前缀判定是**必要不充分**条件：过得了前缀但过不了本条的（如 `https://`）一律 400，因为这种值入库后前台 `<img>` 静默失败、只剩空白格。
   - `caption` 可空、≤80 字（按裁剪后长度）；**两端空白裁剪，空白字符串归一为 `null`**：wire 上不出现空串，客户端不必处理 `""`。
   - 一次 ≤10 张（第 11 张 → 400，整批拒绝）。
 - **`sort` 可重复**：**客户端不得假设唯一，同值保持数组序**（服务端不因重复而拒绝，避免前端整批 400）。
@@ -487,3 +490,4 @@ IPv4 映射（`::ffff:`）、NAT64、6to4 里嵌入的 IPv4 同样按上述规�
 | v1.2.5 | compose 部署冒烟实测发现：建项目 body **不含** `links`/`metadata`（多余键被忽略而非报错），补 4.1「链接与元数据是独立资源」与 `POST /admin/projects/:id/links` / `PATCH|DELETE /admin/links/:id` 行；元数据 body 明确为裸数组、键名字段 `key_label`。**纯条文补正，无实现变更** |
 | v1.2.6 | 项目截图与元数据 `kind` 落条文（见 3.2、4.1.1）：`screenshots[]` 形状与 `PUT /admin/projects/:id/screenshots` 整体替换（≤10 张、`http(s)`、`caption` ≤80 且空白归一 `null`）、`metadata[].kind` 三路径必带、metric ≤2 / ≤16 / ≤12 与 meta 50 / 500、替换 bump `updated_at`、URL 只存原图且截图不进列表。三条实现期假设固定为契约措辞：`sort` 可重复（客户端不得假设唯一，同值保持数组序）、`caption` 空白归一 `null`（wire 上不出现空串，客户端不必处理 `""`）、metric 按条数判且超限整批 400 不静默截断。**纯条文补正，无实现变更** |
 | v1.2.7 | ① 1.3 把 `METHOD_NOT_ALLOWED` 标为**保留值、当前实现不产生**，删掉「由框架 405 产生」，并冻结行为「未知方法 → 404 `NOT_FOUND`」（不开启框架 405，避免暴露「路径存在但方法不对」这一维度）；② 1.4 第 2 条改为「结构必带、值不承诺稳定」：`field`/`code`/`message` 三键任何一侧都不得省略（含 mock），客户端**可展示不可分支**，可验证项为两侧 `Object.keys(details[0]).sort()` 相同；③ 4.1.1 补「传 `[]` 清空也算一次内容变更」的可观察后果（未填 `last_updated_at` 的项目会在 recent 提前）；④ 4.4 节位搬到 4.3 之后（纯搬移，无内容改动，行多重集与搬前一致）。**纯条文补正，无实现变更** |
+| v1.2.8 | 4.1.1 截图 `url` 校验从「`http(s)://` 前缀」收紧为「可解析为**带 host 的绝对 URL**且不含空白字符」：仅有 scheme（`https://`）、空 host、含空白（`http://e.com/a b.png`）一律 400；前缀判定明确为**必要不充分**条件（原判定放过了这类值，入库后前台 `<img>` 静默失败只剩空白格）。**契约先收紧，实现须按此判定**——`screenshots.url_rejected` 行加这两条用例后，在实现跟上之前会红，这是门禁应有的行为 |
