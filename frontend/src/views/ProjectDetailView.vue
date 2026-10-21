@@ -156,8 +156,13 @@ onMounted(() => void load())
 
 <template>
   <main class="page detail">
-    <nav class="back">
-      <RouterLink :to="{ name: 'home' }">← 返回列表</RouterLink>
+    <nav class="back" aria-label="面包屑">
+      <RouterLink :to="{ name: 'home' }">项目</RouterLink>
+      <span class="crumb-sep" aria-hidden="true">/</span>
+      <span v-if="detail" class="crumb-current" aria-current="page">{{ detail.name }}</span>
+      <span v-if="detail" class="updated type-small">
+        更新于 {{ formatDate(detail.last_updated_at ?? detail.updated_at) }}
+      </span>
     </nav>
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -262,7 +267,10 @@ onMounted(() => void load())
           </section>
 
           <section v-if="detail.notes.length" id="related-notes" class="card section" aria-labelledby="notes-title">
-            <h2 id="notes-title">相关笔记</h2>
+            <div class="section-head">
+              <h2 id="notes-title">相关笔记</h2>
+              <span class="count type-small tabular-nums">{{ detail.notes.length }} 篇</span>
+            </div>
             <ul class="note-list">
               <li v-for="note in detail.notes" :key="note.id" class="note-item">
                 <span v-if="note.published_at" class="note-date tabular-nums">{{
@@ -283,7 +291,14 @@ onMounted(() => void load())
 
         <aside v-if="hasSidePanels" class="column-side" aria-label="项目速览">
           <section v-if="hasMetaPanel" class="card section panel" aria-labelledby="meta-title">
-            <h2 id="meta-title">元数据</h2>
+            <div class="section-head">
+              <h2 id="meta-title">元数据</h2>
+              <span class="count type-small tabular-nums">
+                {{ fixedMeta.length }} 固定<template v-if="metaRows.length">
+                  · {{ metaRows.length }} 追加</template
+                >
+              </span>
+            </div>
             <dl class="kv">
               <div v-for="row in fixedMeta" :key="row.label" class="kv-row">
                 <dt>{{ row.label }}</dt>
@@ -297,7 +312,10 @@ onMounted(() => void load())
           </section>
 
           <section v-if="detail.links.length" class="card section panel" aria-labelledby="links-title">
-            <h2 id="links-title">相关链接</h2>
+            <div class="section-head">
+              <h2 id="links-title">相关链接</h2>
+              <span class="count type-small tabular-nums">{{ detail.links.length }}</span>
+            </div>
             <ul class="links">
               <li v-for="link in detail.links" :key="link.id" class="link">
                 <span v-if="!safeHttpUrl(link.url)" class="link-anchor link-anchor--plain">
@@ -330,7 +348,10 @@ onMounted(() => void load())
           </section>
 
           <section v-if="detail.tech_stack.length" class="card section panel" aria-labelledby="tech-title">
-            <h2 id="tech-title">技术栈</h2>
+            <div class="section-head">
+              <h2 id="tech-title">技术栈</h2>
+              <span class="count type-small tabular-nums">{{ detail.tech_stack.length }}</span>
+            </div>
             <ul class="tags">
               <li v-for="tech in detail.tech_stack" :key="tech" class="tag">{{ tech }}</li>
             </ul>
@@ -347,6 +368,30 @@ onMounted(() => void load())
   flex-direction: column;
   gap: var(--space-24);
 }
+.crumb-sep {
+  color: var(--c-text-secondary);
+}
+
+.crumb-current {
+  color: var(--c-ink);
+}
+
+.updated {
+  margin-left: auto;
+  color: var(--c-text-secondary);
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+
+.section-head .count {
+  color: var(--c-text-secondary);
+}
+
 .back {
   font-size: var(--fs-small);
 }

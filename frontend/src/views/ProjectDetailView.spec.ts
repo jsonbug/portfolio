@@ -223,6 +223,25 @@ describe('ProjectDetailView', () => {
     expect(screen.queryByRole('heading', { name: '项目介绍' })).not.toBeInTheDocument()
   })
 
+  it('面包屑「项目 / 名称」+ 右上「更新于」+ 各 panel 标题带计数（稿 02 的版面要素）', async () => {
+    renderDetail('portfolio-platform')
+    await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
+
+    const crumb = screen.getByRole('navigation', { name: '面包屑' })
+    expect(within(crumb).getByRole('link', { name: '项目' })).toBeInTheDocument()
+    expect(within(crumb).getByText('项目展示平台')).toBeInTheDocument()
+    expect(within(crumb).getByText(/^更新于 \d{4}-\d{2}-\d{2}$/)).toBeInTheDocument()
+
+    // 稿上「相关笔记 4 篇」「元数据 6 固定 · 2 追加」「相关链接 4」「技术栈 6」都是标题旁的计数
+    const notes = screen.getByRole('heading', { name: '相关笔记' }).closest('section') as HTMLElement
+    expect(within(notes).getByText('2 篇')).toBeInTheDocument()
+
+    const aside = screen.getByRole('complementary', { name: '项目速览' })
+    expect(within(aside).getByText(/^\d+ 固定 · 2 追加$/)).toBeInTheDocument()
+    expect(within(aside).getByText('2')).toBeInTheDocument() // 相关链接 2 条
+    expect(within(aside).getByText('4')).toBeInTheDocument() // 技术栈 4 个
+  })
+
   it('截图：一次一张 + 左右箭头 + 「截图 n / N」+ 图注（契约 4.1.1）', async () => {
     renderDetail('portfolio-platform')
     await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
