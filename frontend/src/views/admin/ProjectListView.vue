@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { deleteProject, listAdminProjects, restoreProject, updateProject } from '@/api/projects'
 import {
   PUBLISH_STATUS_LABELS,
   type AdminProjectListItem,
+  type Link,
   type PublishStatus,
 } from '@/types'
 import { formatDate } from '@/utils/text'
+import { safeHttpUrl } from '@/utils/link'
 import AppBadge from '@/components/AppBadge.vue'
 import ProjectCover from '@/components/ProjectCover.vue'
 import ProgressBadge from '@/components/ProgressBadge.vue'
@@ -16,14 +18,19 @@ import PublishStatusBadge from '@/components/PublishStatusBadge.vue'
 const router = useRouter()
 
 const items = ref<AdminProjectListItem[]>([])
+const counts = ref({ all: 0, draft: 0, published: 0, archived: 0 })
 const loading = ref(false)
 const error = ref('')
-const total = ref(0)
+const search = ref('')
+/** 分段：全部 / 已发布 / 草稿 / 已归档（无「已删除」，软删项目在「全部」里带徽标）。 */
+const segment = ref<PublishStatus | ''>('')
 
-const filters = reactive<{ search: string; publish_status: PublishStatus | '' }>({
-  search: '',
-  publish_status: '',
-})
+const SEGMENTS = computed<Array<{ value: PublishStatus | ''; label: string; count: number }>>(() => [
+  { value: '', label: '全部', count: counts.value.all },
+  { value: 'published', label: PUBLISH_STATUS_LABELS.published, count: counts.value.published },
+  { value: 'draft', label: PUBLISH_STATUS_LABELS.draft, count: counts.value.draft },
+  { value: 'archived', label: PUBLISH_STATUS_LABELS.archived, count: counts.value.archived },
+])
 
 // 行选择（供后续批量操作使用，本轮仅提供选择态）。
 const selected = ref<Set<string>>(new Set())
@@ -42,13 +49,6 @@ function toggleSelectAll() {
   selected.value = allSelected.value ? new Set() : new Set(items.value.map((item) => item.id))
 }
 
-/** 技术栈折叠摘要：前两项 + 剩余计数（隐藏技术栈列时展示）。 */
-function techTail(item: AdminProjectListItem): string {
-  const stack = item.tech_stack
-  if (stack.length <= 2) return stack.join(' ')
-  return `${stack.slice(0, 2).join(' ')} +${stack.length - 2}`
-}
-
 async function load() {
   loading.value = true
   error.value = ''
@@ -57,16 +57,22 @@ async function load() {
       includeDeleted: true,
       page: 1,
       pageSize: 100,
-      search: filters.search || undefined,
-      publish_status: filters.publish_status || undefined,
+      search: search.value || undefined,
+      publish_status: segment.value || undefined,
     })
     items.value = res.items
-    total.value = res.total
+    counts.value = res.counts
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
     loading.value = false
   }
+}
+
+function pickSegment(value: PublishStatus | '') {
+  if (segment.value === value) return
+  segment.value = value
+  void load()
 }
 
 async function runAction(fn: () => Promise<unknown>) {
@@ -94,11 +100,20 @@ function isDeleted(item: AdminProjectListItem): boolean {
   return item.deleted_at != null
 }
 
-const statusOptions: Array<{ value: PublishStatus; label: string }> = [
-  { value: 'draft', label: PUBLISH_STATUS_LABELS.draft },
-  { value: 'published', label: PUBLISH_STATUS_LABELS.published },
-  { value: 'archived', label: PUBLISH_STATUS_LABELS.archived },
-]
+/** 链接列：仓库 / 官网两个入口，失效（failed）的降级但仍可见。 */
+function entryLinks(item: AdminProjectListItem): Link[] {
+  return item.links.filter((link) => link.type === 'repo' || link.type === 'site')
+}
+
+function linkHref(link: Link): string | null {
+  return safeHttpUrl(link.url)
+}
+
+function linkLabel(link: Link): string {
+  const failed = link.last_status === 'failed'
+  const base = link.type === 'repo' ? '仓库' : '官网'
+  return failed ? `${base}（检查失败，可能已失效）` : base
+}
 
 onMounted(() => void load())
 </script>
@@ -108,31 +123,37 @@ onMounted(() => void load())
     <header class="projects-header">
       <div>
         <h1>项目列表</h1>
-        <p class="subtitle">共 {{ total }} 个项目，支持发布、下架、删除与恢复。</p>
+        <p class="subtitle">共 {{ counts.all }} 个项目，支持发布、下架、删除与恢复。</p>
       </div>
       <RouterLink class="btn btn-primary" :to="{ name: 'admin-project-new' }">新建项目</RouterLink>
     </header>
 
-    <form class="filters card" @submit.prevent="load">
-      <div class="field filters-search">
+    <div class="filters card">
+      <form class="filters-search" @submit.prevent="load">
         <label class="field-label" for="search">搜索</label>
         <input
           id="search"
-          v-model="filters.search"
+          v-model="search"
           class="input"
           type="search"
-          placeholder="按名称或简介搜索"
+          placeholder="按名称、slug 或简介搜索"
         />
+      </form>
+      <div class="segments" role="group" aria-label="按发布状态筛选">
+        <button
+          v-for="seg in SEGMENTS"
+          :key="seg.value || 'all'"
+          class="segment"
+          type="button"
+          :class="{ 'segment--active': segment === seg.value }"
+          :aria-pressed="segment === seg.value"
+          :aria-label="`${seg.label} ${seg.count}`"
+          @click="pickSegment(seg.value)"
+        >
+          {{ seg.label }}<span class="segment-count tabular-nums">{{ seg.count }}</span>
+        </button>
       </div>
-      <div class="field">
-        <label class="field-label" for="status">状态</label>
-        <select id="status" v-model="filters.publish_status" class="select">
-          <option value="">全部</option>
-          <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
-      </div>
-      <button class="btn" type="submit">筛选</button>
-    </form>
+    </div>
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="loading" class="hint">加载中…</p>
@@ -150,10 +171,12 @@ onMounted(() => void load())
                 @change="toggleSelectAll"
               />
             </th>
-            <th class="col-project">项目</th>
-            <th class="col-status">状态</th>
+            <th class="col-name">名称</th>
+            <th class="col-slug">slug</th>
+            <th class="col-status">发布状态</th>
+            <th class="col-progress">进展</th>
+            <th class="col-links">链接</th>
             <th class="col-updated">更新时间</th>
-            <th class="col-tech">技术栈</th>
             <th class="col-actions">操作</th>
           </tr>
         </thead>
@@ -167,39 +190,59 @@ onMounted(() => void load())
                 @change="toggleSelect(item.id)"
               />
             </td>
-            <td class="col-project">
+            <td class="col-name">
               <div class="project-cell">
                 <div class="thumb">
                   <ProjectCover :name="item.name" :cover-image="item.cover_image_url" variant="thumb" />
                 </div>
                 <div class="project-text">
-                  <div class="project-title">
-                    <span class="project-name">{{ item.name }}</span>
-                  </div>
-                  <div class="project-sub">
-                    <span v-if="item.summary" class="tagline">{{ item.summary }}</span>
-                    <span class="fold-updated">{{ formatDate(item.updated_at) }}</span>
-                    <span class="fold-tech">{{ techTail(item) }}</span>
+                  <!-- 名称即编辑入口：窄屏隐藏操作列后仍能进编辑器 -->
+                  <RouterLink
+                    class="project-name"
+                    :to="{ name: 'admin-project-edit', params: { id: item.id } }"
+                  >
+                    {{ item.name }}
+                  </RouterLink>
+                  <div v-if="isDeleted(item)" class="project-sub">
+                    <AppBadge tone="danger">已删除</AppBadge>
                   </div>
                 </div>
               </div>
             </td>
+            <td class="col-slug">
+              <code class="slug">{{ item.slug }}</code>
+            </td>
             <td class="col-status">
-              <template v-if="!isDeleted(item)">
-                <span class="status-cell">
-                  <PublishStatusBadge :status="item.publish_status" />
-                  <ProgressBadge :progress="item.progress" />
-                </span>
-              </template>
-              <AppBadge v-else tone="danger">已删除</AppBadge>
+              <PublishStatusBadge :status="item.publish_status" />
+            </td>
+            <td class="col-progress">
+              <ProgressBadge :progress="item.progress" />
+            </td>
+            <td class="col-links">
+              <span class="entries">
+                <template v-for="link in entryLinks(item)" :key="link.id">
+                  <a
+                    v-if="linkHref(link)"
+                    class="entry"
+                    :class="{ 'entry--failed': link.last_status === 'failed' }"
+                    :href="linkHref(link) ?? undefined"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    :aria-label="`${linkLabel(link)}（新窗口打开）`"
+                    :title="linkLabel(link)"
+                  >
+                    {{ link.type === 'repo' ? '仓库' : '官网' }}
+                    <span v-if="link.last_status === 'failed'" aria-hidden="true">⚠</span>
+                  </a>
+                  <span v-else class="entry entry--failed" :title="linkLabel(link)">
+                    {{ link.type === 'repo' ? '仓库' : '官网' }} ⚠
+                  </span>
+                </template>
+                <span v-if="!entryLinks(item).length" class="muted">—</span>
+              </span>
             </td>
             <td class="col-updated">
               <span class="tabular-nums">{{ formatDate(item.updated_at) }}</span>
-            </td>
-            <td class="col-tech">
-              <span class="tags">
-                <span v-for="tech in item.tech_stack" :key="tech" class="tag">{{ tech }}</span>
-              </span>
             </td>
             <td class="col-actions">
               <div class="actions">
@@ -221,15 +264,16 @@ onMounted(() => void load())
                   >
                     下架
                   </button>
-                  <button
-                    class="btn btn-sm btn-danger"
-                    type="button"
-                    @click="confirmDelete(item)"
-                  >
+                  <button class="btn btn-sm btn-danger" type="button" @click="confirmDelete(item)">
                     删除
                   </button>
                 </template>
-                <button v-else class="btn btn-sm" type="button" @click="runAction(() => restoreProject(item.id))">
+                <button
+                  v-else
+                  class="btn btn-sm"
+                  type="button"
+                  @click="runAction(() => restoreProject(item.id))"
+                >
                   恢复
                 </button>
               </div>
@@ -272,7 +316,46 @@ onMounted(() => void load())
 }
 .filters-search {
   flex: 1;
-  min-width: 200px;
+  min-width: 220px;
+}
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--c-text-secondary);
+}
+.segments {
+  display: inline-flex;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: var(--c-fill);
+  border-radius: var(--r-control);
+}
+.segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--touch-min);
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--c-text);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-tag);
+  cursor: pointer;
+}
+.segment:hover {
+  background: var(--c-surface);
+}
+.segment--active {
+  color: var(--c-primary-strong);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-e1);
+  font-weight: 600;
+}
+.segment-count {
+  font-size: var(--fs-mono);
+  color: var(--c-text-secondary);
 }
 .error {
   margin: 0;
@@ -291,10 +374,11 @@ onMounted(() => void load())
   border: 1px solid var(--c-border);
   border-radius: var(--r-card);
   box-shadow: var(--shadow-e1);
-  overflow: hidden;
+  overflow-x: auto;
 }
 .table {
   width: 100%;
+  min-width: var(--admin-min-width);
   border-collapse: collapse;
   font-size: 14px;
 }
@@ -310,6 +394,7 @@ onMounted(() => void load())
   color: var(--c-text-secondary);
   background: var(--c-surface);
   border-bottom: 1px solid var(--c-border);
+  white-space: nowrap;
 }
 .table td {
   padding: 8px 16px;
@@ -327,24 +412,29 @@ onMounted(() => void load())
   box-shadow: inset 2px 0 0 var(--c-primary);
 }
 
-/* 列宽 */
+/* 列宽：7 数据列 + 工具列 */
 .col-select {
   width: 48px;
+  text-align: center;
+}
+.col-name {
+  min-width: 240px;
+}
+.col-slug {
+  width: 168px;
 }
 .col-status {
-  width: 148px;
+  width: 108px;
 }
-.status-cell {
-  display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
+.col-progress {
+  width: 108px;
+}
+.col-links {
+  width: 148px;
 }
 .col-updated {
   width: 132px;
   white-space: nowrap;
-}
-.col-tech {
-  width: 190px;
 }
 .col-actions {
   text-align: right;
@@ -358,11 +448,8 @@ onMounted(() => void load())
   margin: 0;
   accent-color: var(--c-primary);
 }
-.col-select {
-  text-align: center;
-}
 
-/* 项目列 */
+/* 名称列 */
 .project-cell {
   display: flex;
   align-items: center;
@@ -377,44 +464,50 @@ onMounted(() => void load())
 .project-text {
   min-width: 0;
 }
-.project-title {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-}
 .project-name {
+  display: block;
   font-weight: 700;
   color: var(--c-ink);
+  text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.project-name:hover {
+  color: var(--c-primary-strong);
+  text-decoration: underline;
 }
 .project-sub {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  font-size: 12px;
-  color: var(--c-text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-.tagline {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  margin-top: 2px;
 }
 
-.tags {
-  display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
+.slug {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--fs-mono);
+  color: var(--c-text-secondary);
 }
-.tag {
-  padding: 1px 8px;
-  font-size: 12px;
+
+.entries {
+  display: inline-flex;
+  gap: var(--space-12);
+}
+.entry {
+  font-size: 13px;
   color: var(--c-primary-strong);
-  background: var(--c-primary-soft);
-  border-radius: var(--r-tag);
+  text-decoration: none;
   white-space: nowrap;
+  border-radius: var(--r-tag);
+}
+.entry:hover {
+  text-decoration: underline;
+}
+/* F9：只有「检查失败」才降级；unknown / ok 与正常入口同款 */
+.entry--failed {
+  color: var(--c-text-secondary);
+  text-decoration: line-through dotted;
+}
+.muted {
+  color: var(--c-text-secondary);
 }
 
 .actions {
@@ -428,89 +521,26 @@ onMounted(() => void load())
   font-size: 13px;
 }
 
-/* 折叠信息：默认隐藏，仅在对应列被隐藏时展示 */
-.fold-updated,
-.fold-tech {
-  display: none;
-}
-
-/* 断点 1：≤1279 隐藏「更新时间」列，折进项目列 */
+/* 隐列顺序（gap §四）：从右往左 操作 → 更新时间 → 进展 → slug；
+   名称 / 发布状态 / 链接任何宽度都不隐藏，最小 768（<768 不做适配，横向滚动）。 */
 @media (max-width: 1279px) {
+  .col-actions {
+    display: none;
+  }
+}
+@media (max-width: 1119px) {
   .col-updated {
     display: none;
   }
-  .fold-updated {
-    display: inline;
-  }
 }
-/* 断点 2：≤1119 再隐藏「技术栈」列，折成尾部摘要 */
-@media (max-width: 1119px) {
-  .col-tech {
-    display: none;
-  }
-  .fold-tech {
-    display: inline;
-  }
-}
-/* 断点 3：<960 卡片化 */
 @media (max-width: 959px) {
-  .table-wrap {
-    border: none;
-    box-shadow: none;
-    background: transparent;
-    overflow: visible;
-  }
-  .table,
-  .table thead,
-  .table tbody,
-  .table tr,
-  .table td {
-    display: block;
-  }
-  .table thead {
+  .col-progress {
     display: none;
   }
-  .table tbody tr {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 16px;
-    margin-bottom: 12px;
-    padding: 12px 16px;
-    background: var(--c-surface);
-    border: 1px solid var(--c-border);
-    border-radius: var(--r-card);
-    box-shadow: var(--shadow-e1);
-  }
-  .table td {
-    border: none;
-    padding: 0;
-  }
-  .col-select {
-    order: 1;
-    width: auto;
-  }
-  .col-project {
-    order: 2;
-    flex: 1 1 auto;
-    min-width: 200px;
-  }
-  .thumb {
-    width: 36px;
-    height: 36px;
-  }
-  .col-status {
-    order: 3;
-    width: auto;
-  }
-  .col-actions {
-    order: 4;
-    flex-basis: 100%;
-    text-align: left;
-  }
-  .actions {
-    justify-content: flex-start;
-    flex-wrap: wrap;
+}
+@media (max-width: 839px) {
+  .col-slug {
+    display: none;
   }
 }
 </style>

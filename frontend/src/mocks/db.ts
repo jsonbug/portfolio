@@ -305,7 +305,11 @@ export function createDbState(now = Date.now()): DbState {
     link(SEED_IDS.portfolio, 'repo', 'https://github.com/jsonbug/portfolio', 0, 'GitHub'),
     link(SEED_IDS.portfolio, 'site', 'https://portfolio.example.com', 1, '官网'),
     link(SEED_IDS.chart, 'repo', 'https://github.com/jsonbug/chart-kit', 0, 'GitHub'),
-    link(SEED_IDS.chart, 'site', 'https://chart.example.com', 1, null),
+    // 失效态挂在 site 上：后台「链接」列只渲染 repo/site 两类，评审要求失效态在那一列可验
+    link(SEED_IDS.chart, 'site', 'https://chart.example.com', 1, null, {
+      last_status: 'failed',
+      last_http_status: 502,
+    }),
     link(SEED_IDS.chart, 'docs', 'https://chart.example.com/docs', 2, '文档', {
       last_status: 'failed',
       last_http_status: 502,
