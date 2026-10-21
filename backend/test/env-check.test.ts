@@ -113,11 +113,32 @@ describe("resolveSecretPolicy：同一套校验，不同环境不同后果", () 
     expect(prod).toContain("放行");
   });
 
-  it("登录接口的附加提示：只在配置有问题时给，且点名是哪几个变量", () => {
-    expect(loginConfigHint([])).toBeNull();
-    const hint = loginConfigHint(issue.concat([{ name: "ADMIN_PASSWORD_HASH", problem: "格式错", hint: "重新生成" }]));
+  // 这条曾经把「泄露」写成了期望：非生产给提示是对的，但生产必须字节级等于基线。
+  it("登录接口的附加提示：非生产且配置有问题时给，且点名是哪几个变量", () => {
+    expect(loginConfigHint([], "development")).toBeNull();
+    const issues = issue.concat([{ name: "ADMIN_PASSWORD_HASH", problem: "格式错", hint: "重新生成" }]);
+    const hint = loginConfigHint(issues, "development");
     expect(hint).toContain("AUTH_SECRET");
     expect(hint).toContain("ADMIN_PASSWORD_HASH");
     expect(hint).toContain("启动日志");
+  });
+
+  it("生产即使 ALLOW_WEAK_SECRET=1 放行，401 message 也与基线字节一致", () => {
+    const issues = issue.concat([{ name: "ADMIN_PASSWORD_HASH", problem: "格式错", hint: "重新生成" }]);
+    // 逃逸开关在生产只会把策略从 throw 降为 warn（见 resolveSecretPolicy），提示仍不得进入响应体
+    expect(resolveSecretPolicy(issues.length, "production", true)).toBe("warn");
+    expect(loginConfigHint(issues, "production")).toBeNull();
+
+    const baseline = "用户名或密码错误";
+    const message = `${baseline}${loginConfigHint(issues, "production") ?? ""}`;
+    expect(message).toBe(baseline);
+    expect(message.length).toBe(baseline.length);
+  });
+
+  it("非生产下同样两条 issue → 带提示（证明差异确实来自 nodeEnv，而不是 issues 为空）", () => {
+    const issues = issue.concat([{ name: "ADMIN_PASSWORD_HASH", problem: "格式错", hint: "重新生成" }]);
+    const dev = loginConfigHint(issues, "development") ?? "";
+    expect(dev.length).toBeGreaterThan(0);
+    expect(loginConfigHint(issues, "production") ?? "").toHaveLength(0);
   });
 });

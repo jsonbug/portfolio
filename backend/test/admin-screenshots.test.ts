@@ -95,11 +95,22 @@ describe("PUT /api/v1/admin/projects/:id/screenshots", () => {
     expect(res.json().screenshots).toHaveLength(10);
   });
 
-  it("非 http(s) 协议 400（javascript: / data: / 相对路径）", async () => {
+  it("非 http(s) 协议 400（javascript: / data: / 相对路径 / ftp）", async () => {
     const p = await createProject(app, token, { name: "协议项目" });
     for (const url of ["javascript:alert(1)", "data:image/png;base64,AAA", "/local.png", "ftp://x/y.png"]) {
       const res = await putScreenshots(p.id, [{ url }]);
       expect(res.statusCode, url).toBe(400);
+    }
+  });
+
+  // 原来这三条全部入库并从前台原样下发（`GET /projects/:slug` → `['https://', 'http://e.com/a b.png']`）：
+  // 后台「保存成功」、前台空白格，没有任何错误信号。
+  it("前缀合法但落不了地的地址 400（无主机 / 含空白 / 协议相对）", async () => {
+    const p = await createProject(app, token, { name: "坏地址项目" });
+    for (const url of ["https://", "http://e.com/a b.png", "//e.com/a.png"]) {
+      const res = await putScreenshots(p.id, [{ url }]);
+      expect(res.statusCode, url).toBe(400);
+      expect(JSON.stringify(res.json().error.details), url).toContain("url");
     }
   });
 
