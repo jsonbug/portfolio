@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { listPublicNotes } from '@/api/notes'
 import { handleMockRequest, resetMockDb } from '@/mocks/handlers'
 import NoteDetailView from './NoteDetailView.vue'
 
@@ -107,9 +108,10 @@ describe('NoteDetailView', () => {
 describe('NoteDetailView · 门槛与 a11y', () => {
   beforeEach(() => resetMockDb())
 
-  it('上下篇定位失败时给出说明与回列表入口，而不是静默不渲染', async () => {
-    // 造 100 篇更晚的笔记，把种子笔记挤出「最近 100 篇」
-    for (let i = 0; i < 100; i += 1) {
+  it('超过 100 篇时（真的造 101 篇）选中笔记落在窗外，上下篇区给说明与回列表入口', async () => {
+    // 契约 §3.3 的口径是「最近 100 篇」：这里造满 101 篇，把种子笔记挤出窗口，
+    // 不靠「列表内相邻」的等价物近似。
+    for (let i = 0; i < 101; i += 1) {
       const created = admin('POST', '/admin/notes', {
         project_id: 'proj_chart',
         slug: `bulk-${i}`,
@@ -119,6 +121,9 @@ describe('NoteDetailView · 门槛与 a11y', () => {
       })
       expect(created.status).toBe(201)
     }
+    const listed = await listPublicNotes({ page: 1, pageSize: 100 })
+    expect(listed.items).toHaveLength(100)
+    expect(listed.total).toBeGreaterThanOrEqual(101)
 
     await renderNote('chart-kit-0-9')
     await screen.findByRole('heading', { level: 1, name: 'Chart Kit 0.9 发布说明' })
