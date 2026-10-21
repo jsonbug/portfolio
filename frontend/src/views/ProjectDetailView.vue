@@ -2,28 +2,25 @@
 import { computed, onMounted, ref } from 'vue'
 import { getPublicProject } from '@/api/projects'
 import ProjectCover from '@/components/ProjectCover.vue'
-import { LINK_TYPE_LABELS, PROJECT_LIFECYCLE_LABELS, type ProjectDetail } from '@/types'
+import { LINK_TYPE_LABELS, PROGRESS_LABELS, type ProjectDetail } from '@/types'
 import { renderMarkdown } from '@/utils/markdown'
 import { formatDate } from '@/utils/text'
 
-const props = defineProps<{ id: string }>()
+const props = defineProps<{ slug: string }>()
 
 const detail = ref<ProjectDetail | null>(null)
 const loading = ref(true)
 const error = ref('')
 
 const descriptionHtml = computed(() =>
-  detail.value?.description ? renderMarkdown(detail.value.description) : '',
-)
-const noteHtml = computed(() =>
-  detail.value?.note?.content ? renderMarkdown(detail.value.note.content) : '',
+  detail.value?.description_md ? renderMarkdown(detail.value.description_md) : '',
 )
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    detail.value = await getPublicProject(props.id)
+    detail.value = await getPublicProject(props.slug)
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -45,10 +42,10 @@ onMounted(() => void load())
 
     <template v-else-if="detail">
       <header class="hero">
-        <ProjectCover :name="detail.name" :cover-image="detail.coverImage" variant="hero" />
+        <ProjectCover :name="detail.name" :cover-image="detail.cover_image_url" variant="hero" />
         <div class="hero-body">
           <h1 class="name">{{ detail.name }}</h1>
-          <p v-if="detail.tagline" class="tagline">{{ detail.tagline }}</p>
+          <p v-if="detail.summary" class="tagline">{{ detail.summary }}</p>
           <dl class="meta">
             <div v-if="detail.stars != null" class="meta-item">
               <dt>Stars</dt>
@@ -58,23 +55,33 @@ onMounted(() => void load())
               <dt>角色</dt>
               <dd>{{ detail.role }}</dd>
             </div>
-            <div v-if="detail.projectStatus" class="meta-item">
-              <dt>状态</dt>
-              <dd>{{ PROJECT_LIFECYCLE_LABELS[detail.projectStatus] }}</dd>
+            <div class="meta-item">
+              <dt>进展</dt>
+              <dd>{{ PROGRESS_LABELS[detail.progress] }}</dd>
             </div>
-            <div v-if="detail.startDate || detail.endDate" class="meta-item">
-              <dt>周期</dt>
-              <dd>
-                {{ formatDate(detail.startDate!) || '…' }} ~ {{ detail.endDate ? formatDate(detail.endDate) : '至今' }}
-              </dd>
+            <div v-if="detail.version" class="meta-item">
+              <dt>版本</dt>
+              <dd>{{ detail.version }}</dd>
             </div>
-            <div v-if="detail.githubRepo" class="meta-item">
-              <dt>仓库</dt>
-              <dd>{{ detail.githubRepo }}</dd>
+            <div v-if="detail.start_year" class="meta-item">
+              <dt>起始年份</dt>
+              <dd>{{ detail.start_year }}</dd>
+            </div>
+            <div v-if="detail.team_size != null" class="meta-item">
+              <dt>团队规模</dt>
+              <dd>{{ detail.team_size }} 人</dd>
+            </div>
+            <div v-if="detail.license" class="meta-item">
+              <dt>许可</dt>
+              <dd>{{ detail.license }}</dd>
+            </div>
+            <div v-if="detail.updated_at" class="meta-item">
+              <dt>最近更新</dt>
+              <dd>{{ formatDate(detail.updated_at) }}</dd>
             </div>
           </dl>
-          <ul v-if="detail.technologies.length" class="tags" aria-label="技术栈">
-            <li v-for="tech in detail.technologies" :key="tech" class="tag">{{ tech }}</li>
+          <ul v-if="detail.tech_stack.length" class="tags" aria-label="技术栈">
+            <li v-for="tech in detail.tech_stack" :key="tech" class="tag">{{ tech }}</li>
           </ul>
         </div>
       </header>
@@ -89,14 +96,29 @@ onMounted(() => void load())
         </ul>
       </section>
 
-      <section v-if="detail.description" class="card section" aria-labelledby="desc-title">
+      <section v-if="detail.metadata.length" class="card section" aria-labelledby="meta-kv-title">
+        <h2 id="meta-kv-title">元数据</h2>
+        <dl class="kv">
+          <div v-for="row in detail.metadata" :key="row.key_label" class="kv-row">
+            <dt>{{ row.key_label }}</dt>
+            <dd>{{ row.value }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section v-if="detail.description_md" class="card section" aria-labelledby="desc-title">
         <h2 id="desc-title">项目介绍</h2>
         <div class="markdown" v-html="descriptionHtml" />
       </section>
 
-      <section v-if="detail.note" class="card section" aria-labelledby="note-title">
-        <h2 id="note-title">笔记 · {{ detail.note.title }}</h2>
-        <div class="markdown" v-html="noteHtml" />
+      <section v-if="detail.notes.length" class="card section" aria-labelledby="note-title">
+        <h2 id="note-title">笔记</h2>
+        <ul class="note-list">
+          <li v-for="note in detail.notes" :key="note.id" class="note-item">
+            <span class="note-title">{{ note.title }}</span>
+            <span v-if="note.published_at" class="note-date">{{ formatDate(note.published_at) }}</span>
+          </li>
+        </ul>
       </section>
     </template>
   </main>
@@ -208,6 +230,41 @@ onMounted(() => void load())
   width: 56px;
   font-size: 12px;
   color: var(--c-text-secondary);
+}
+.kv {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--sp-2);
+}
+.kv-row dt {
+  font-size: 12px;
+  color: var(--c-text-secondary);
+}
+.kv-row dd {
+  margin: 2px 0 0;
+  font-size: 14px;
+  color: var(--c-text);
+  font-variant-numeric: tabular-nums;
+}
+.note-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.note-item {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: 14px;
+}
+.note-date {
+  color: var(--c-text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 /* 消毒后的 Markdown 排版 */
 .markdown :deep(h1),

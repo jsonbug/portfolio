@@ -1,18 +1,30 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { createProject, getAdminProject, updateProject } from '@/api/projects'
+import {
+  createProject,
+  getAdminProject,
+  replaceProjectMetadata,
+  updateProject,
+} from '@/api/projects'
 import { addLink, deleteLink, updateLink } from '@/api/links'
-import { deleteNote, upsertNote } from '@/api/notes'
+import { listAdminNotes } from '@/api/notes'
 import {
   LINK_TYPE_LABELS,
-  PROJECT_LIFECYCLE_LABELS,
-  PROJECT_STATUS_LABELS,
+  PROGRESS_LABELS,
+  PUBLISH_STATUS_LABELS,
+  type AdminNoteListItem,
   type LinkType,
-  type ProjectLifecycle,
-  type ProjectStatus,
+  type MetadataItemInput,
+  type Progress,
+  type PublishStatus,
 } from '@/types'
 
+/**
+ * 项目编辑器：固定列 + 自定义元数据（KV）+ 链接。
+ * 三块独立保存（元数据 PATCH / KV PUT / 链接逐条）。
+ * 笔记改为独立栏目（N:1），编辑器在后续批次交付，这里只做只读清单。
+ */
 const props = defineProps<{ id?: string }>()
 
 const router = useRouter()
@@ -20,45 +32,60 @@ const router = useRouter()
 const isNew = computed(() => !props.id)
 const projectId = computed(() => props.id ?? '')
 
-// ---------- 元数据 ----------
 const meta = reactive({
+  slug: '',
   name: '',
-  tagline: '',
-  description: '',
-  status: 'draft' as ProjectStatus,
+  summary: '',
+  description_md: '',
+  publish_status: 'draft' as PublishStatus,
+  progress: 'ongoing' as Progress,
   stars: null as number | null,
+  version: '',
   role: '',
-  projectStatus: '' as ProjectLifecycle | '',
-  startDate: '',
-  endDate: '',
-  githubRepo: '',
-  coverImage: '',
+  license: '',
+  start_year: null as number | null,
+  team_size: null as number | null,
+  last_updated_at: '',
+  cover_image_url: '',
+  cover_source_url: '',
 })
 const techInput = ref('')
 
-// ---------- 链接 ----------
+const kvRows = ref<MetadataItemInput[]>([])
+
 interface LinkRow {
   id?: string
   type: LinkType
   label: string
   url: string
+  sort: number
 }
 const links = ref<LinkRow[]>([])
 
-// ---------- 笔记 ----------
-const noteTitle = ref('')
-const noteContent = ref('')
+const notes = ref<AdminNoteListItem[]>([])
 
 const loading = ref(false)
 const error = ref('')
 const metaSaving = ref(false)
 const metaSaved = ref(false)
+const kvSaving = ref(false)
 const linkSaving = ref(false)
-const noteSaving = ref(false)
 const notice = ref('')
+
+const SLUG_PATTERN = /^[a-z0-9-]{2,64}$/
 
 function parseTech(input: string): string[] {
   return [...new Set(input.split(/[,，]/).map((s) => s.trim()).filter(Boolean))]
+}
+
+/** `<input type="date">` 只认 YYYY-MM-DD；后端可能返回完整 ISO。 */
+function dateInput(iso: string | null): string {
+  return iso ? iso.slice(0, 10) : ''
+}
+
+/** YYYY-MM-DD → ISO（UTC 零点），空值表示清空。 */
+function isoFromDate(value: string): string | null {
+  return value ? `${value}T00:00:00.000Z` : null
 }
 
 async function load() {
@@ -67,22 +94,32 @@ async function load() {
   error.value = ''
   try {
     const d = await getAdminProject(props.id)
+    meta.slug = d.slug
     meta.name = d.name
-    meta.tagline = d.tagline ?? ''
-    meta.description = d.description ?? ''
-    meta.status = d.status
+    meta.summary = d.summary ?? ''
+    meta.description_md = d.description_md ?? ''
+    meta.publish_status = d.publish_status
+    meta.progress = d.progress
     meta.stars = d.stars
+    meta.version = d.version ?? ''
     meta.role = d.role ?? ''
-    meta.projectStatus = d.projectStatus ?? ''
-    // <input type="date"> 只认 YYYY-MM-DD，后端可能返回完整 ISO 时间戳。
-    meta.startDate = d.startDate ? d.startDate.slice(0, 10) : ''
-    meta.endDate = d.endDate ? d.endDate.slice(0, 10) : ''
-    meta.githubRepo = d.githubRepo ?? ''
-    meta.coverImage = d.coverImage ?? ''
-    techInput.value = d.technologies.join(', ')
-    links.value = d.links.map((l) => ({ id: l.id, type: l.type, label: l.label ?? '', url: l.url }))
-    noteTitle.value = d.note?.title ?? ''
-    noteContent.value = d.note?.content ?? ''
+    meta.license = d.license ?? ''
+    meta.start_year = d.start_year
+    meta.team_size = d.team_size
+    meta.last_updated_at = dateInput(d.last_updated_at)
+    meta.cover_image_url = d.cover_image_url ?? ''
+    meta.cover_source_url = d.cover_source_url ?? ''
+    techInput.value = d.tech_stack.join(', ')
+    kvRows.value = d.metadata.map((row) => ({ key_label: row.key_label, value: row.value }))
+    links.value = d.links.map((l) => ({
+      id: l.id,
+      type: l.type,
+      label: l.label ?? '',
+      url: l.url,
+      sort: l.sort,
+    }))
+    const noteRes = await listAdminNotes({ project_id: props.id, pageSize: 100 })
+    notes.value = noteRes.items
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -92,26 +129,39 @@ async function load() {
 
 async function saveMeta() {
   const name = meta.name.trim()
+  const slug = meta.slug.trim()
+  if (!SLUG_PATTERN.test(slug)) {
+    error.value = 'slug 只能包含小写字母、数字与连字符，长度 2–64'
+    return
+  }
   if (!name) {
     error.value = '项目名称必填'
+    return
+  }
+  if (meta.summary.length > 60) {
+    error.value = '一句话简介最长 60 字'
     return
   }
   metaSaving.value = true
   metaSaved.value = false
   error.value = ''
   const payload = {
+    slug,
     name,
-    tagline: meta.tagline || null,
-    description: meta.description || null,
-    status: meta.status,
+    summary: meta.summary || null,
+    description_md: meta.description_md || null,
+    publish_status: meta.publish_status,
+    progress: meta.progress,
     stars: meta.stars,
+    version: meta.version || null,
     role: meta.role || null,
-    projectStatus: meta.projectStatus || null,
-    startDate: meta.startDate || null,
-    endDate: meta.endDate || null,
-    githubRepo: meta.githubRepo || null,
-    coverImage: meta.coverImage || null,
-    technologies: parseTech(techInput.value),
+    license: meta.license || null,
+    start_year: meta.start_year,
+    team_size: meta.team_size,
+    last_updated_at: isoFromDate(meta.last_updated_at),
+    cover_image_url: meta.cover_image_url || null,
+    cover_source_url: meta.cover_source_url || null,
+    tech_stack: parseTech(techInput.value),
   }
   try {
     if (props.id) {
@@ -128,9 +178,40 @@ async function saveMeta() {
   }
 }
 
-// ---------- 链接操作 ----------
+// ---------- 自定义元数据 ----------
+function addKvRow() {
+  kvRows.value.push({ key_label: '', value: '' })
+}
+
+function removeKvRow(index: number) {
+  kvRows.value.splice(index, 1)
+}
+
+async function saveMetadata() {
+  const rows = kvRows.value
+    .map((row) => ({ key_label: row.key_label.trim(), value: row.value }))
+    .filter((row) => row.key_label)
+  const labels = rows.map((row) => row.key_label)
+  if (new Set(labels).size !== labels.length) {
+    error.value = '自定义元数据的键名不能重复'
+    return
+  }
+  kvSaving.value = true
+  error.value = ''
+  try {
+    const detail = await replaceProjectMetadata(projectId.value, rows)
+    kvRows.value = detail.metadata.map((row) => ({ key_label: row.key_label, value: row.value }))
+    notice.value = '自定义元数据已保存'
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '保存失败'
+  } finally {
+    kvSaving.value = false
+  }
+}
+
+// ---------- 链接 ----------
 function addLinkRow() {
-  links.value.push({ type: 'other', label: '', url: '' })
+  links.value.push({ type: 'other', label: '', url: '', sort: links.value.length })
 }
 
 async function saveLink(row: LinkRow, index: number) {
@@ -145,7 +226,7 @@ async function saveLink(row: LinkRow, index: number) {
       type: row.type,
       label: row.label || null,
       url: row.url.trim(),
-      sortOrder: index,
+      sort: index,
     }
     if (row.id) {
       await updateLink(row.id, payload)
@@ -178,41 +259,8 @@ async function removeLink(row: LinkRow) {
   }
 }
 
-// ---------- 笔记操作 ----------
-async function saveNote() {
-  if (!noteTitle.value.trim() || !noteContent.value.trim()) {
-    error.value = '笔记标题与正文均必填'
-    return
-  }
-  noteSaving.value = true
-  error.value = ''
-  try {
-    await upsertNote(projectId.value, { title: noteTitle.value.trim(), content: noteContent.value })
-    notice.value = '笔记已保存'
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '保存失败'
-  } finally {
-    noteSaving.value = false
-  }
-}
-
-async function removeNote() {
-  noteSaving.value = true
-  error.value = ''
-  try {
-    await deleteNote(projectId.value)
-    noteTitle.value = ''
-    noteContent.value = ''
-    notice.value = '笔记已删除'
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '删除失败'
-  } finally {
-    noteSaving.value = false
-  }
-}
-
-const statusOptions = Object.entries(PROJECT_STATUS_LABELS) as Array<[ProjectStatus, string]>
-const lifecycleOptions = Object.entries(PROJECT_LIFECYCLE_LABELS) as Array<[ProjectLifecycle, string]>
+const statusOptions = Object.entries(PUBLISH_STATUS_LABELS) as Array<[PublishStatus, string]>
+const progressOptions = Object.entries(PROGRESS_LABELS) as Array<[Progress, string]>
 const linkTypeOptions = Object.entries(LINK_TYPE_LABELS) as Array<[LinkType, string]>
 
 onMounted(() => void load())
@@ -223,7 +271,7 @@ onMounted(() => void load())
     <header class="editor-header">
       <div>
         <h1>{{ isNew ? '新建项目' : `编辑：${meta.name || '…'}` }}</h1>
-        <p class="subtitle">元数据、链接、笔记分区独立保存。</p>
+        <p class="subtitle">元数据、自定义字段、链接分区独立保存。</p>
       </div>
       <RouterLink class="btn" :to="{ name: 'admin-projects' }">返回列表</RouterLink>
     </header>
@@ -239,20 +287,36 @@ onMounted(() => void load())
         <div class="grid">
           <div class="field">
             <label class="field-label" for="name">名称 *</label>
-            <input id="name" v-model="meta.name" class="input" type="text" placeholder="项目名称" />
+            <input id="name" v-model="meta.name" class="input" type="text" placeholder="项目名称（≤100 字）" />
           </div>
           <div class="field">
-            <label class="field-label" for="tagline">简介</label>
-            <input id="tagline" v-model="meta.tagline" class="input" type="text" placeholder="一句话简介（≤200 字）" />
+            <label class="field-label" for="slug">slug *</label>
+            <input
+              id="slug"
+              v-model="meta.slug"
+              class="input"
+              type="text"
+              placeholder="小写字母/数字/连字符，如 portfolio"
+            />
           </div>
           <div class="field span-2">
-            <label class="field-label" for="description">描述（Markdown）</label>
-            <textarea id="description" v-model="meta.description" class="textarea" rows="6" placeholder="项目描述，支持 Markdown" />
+            <label class="field-label" for="summary">一句话简介</label>
+            <input id="summary" v-model="meta.summary" class="input" type="text" maxlength="60" placeholder="卡片副标题（≤60 字）" />
+          </div>
+          <div class="field span-2">
+            <label class="field-label" for="description_md">描述（Markdown）</label>
+            <textarea id="description_md" v-model="meta.description_md" class="textarea" rows="6" placeholder="项目描述，支持 Markdown" />
           </div>
           <div class="field">
-            <label class="field-label" for="status">发布状态</label>
-            <select id="status" v-model="meta.status" class="select">
+            <label class="field-label" for="publish_status">曝光状态</label>
+            <select id="publish_status" v-model="meta.publish_status" class="select">
               <option v-for="[value, label] in statusOptions" :key="value" :value="value">{{ label }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="field-label" for="progress">进展</label>
+            <select id="progress" v-model="meta.progress" class="select">
+              <option v-for="[value, label] in progressOptions" :key="value" :value="value">{{ label }}</option>
             </select>
           </div>
           <div class="field">
@@ -260,31 +324,36 @@ onMounted(() => void load())
             <input id="stars" v-model.number="meta.stars" class="input" type="number" min="0" step="1" placeholder="手填" />
           </div>
           <div class="field">
+            <label class="field-label" for="version">版本</label>
+            <input id="version" v-model="meta.version" class="input" type="text" placeholder="如 v1.2.0" />
+          </div>
+          <div class="field">
             <label class="field-label" for="role">角色</label>
             <input id="role" v-model="meta.role" class="input" type="text" placeholder="如：全栈开发 / 维护者" />
           </div>
           <div class="field">
-            <label class="field-label" for="lifecycle">项目状态</label>
-            <select id="lifecycle" v-model="meta.projectStatus" class="select">
-              <option value="">未设置</option>
-              <option v-for="[value, label] in lifecycleOptions" :key="value" :value="value">{{ label }}</option>
-            </select>
+            <label class="field-label" for="license">许可证</label>
+            <input id="license" v-model="meta.license" class="input" type="text" placeholder="如 MIT" />
           </div>
           <div class="field">
-            <label class="field-label" for="startDate">开始日期</label>
-            <input id="startDate" v-model="meta.startDate" class="input" type="date" />
+            <label class="field-label" for="start_year">开始年份</label>
+            <input id="start_year" v-model.number="meta.start_year" class="input" type="number" min="1000" max="9999" step="1" placeholder="如 2023" />
           </div>
           <div class="field">
-            <label class="field-label" for="endDate">结束日期</label>
-            <input id="endDate" v-model="meta.endDate" class="input" type="date" />
+            <label class="field-label" for="team_size">团队规模</label>
+            <input id="team_size" v-model.number="meta.team_size" class="input" type="number" min="1" step="1" placeholder="参与人数" />
           </div>
           <div class="field">
-            <label class="field-label" for="githubRepo">GitHub 仓库</label>
-            <input id="githubRepo" v-model="meta.githubRepo" class="input" type="text" placeholder="owner/repo（预留）" />
+            <label class="field-label" for="last_updated_at">最近更新</label>
+            <input id="last_updated_at" v-model="meta.last_updated_at" class="input" type="date" />
           </div>
           <div class="field">
-            <label class="field-label" for="coverImage">封面图 URL</label>
-            <input id="coverImage" v-model="meta.coverImage" class="input" type="url" placeholder="https://…（可选，留空用渐层兜底）" />
+            <label class="field-label" for="cover_image_url">封面图 URL</label>
+            <input id="cover_image_url" v-model="meta.cover_image_url" class="input" type="url" placeholder="https://…（可选，留空用渐层兜底）" />
+          </div>
+          <div class="field">
+            <label class="field-label" for="cover_source_url">封面来源</label>
+            <input id="cover_source_url" v-model="meta.cover_source_url" class="input" type="url" placeholder="https://…（可选）" />
           </div>
           <div class="field span-2">
             <label class="field-label" for="tech">技术栈</label>
@@ -299,16 +368,38 @@ onMounted(() => void load())
         </div>
       </section>
 
+      <!-- 自定义元数据（KV） -->
+      <section class="card section" aria-labelledby="kv-title">
+        <h2 id="kv-title">自定义元数据</h2>
+        <p v-if="isNew" class="hint">先创建项目，再添加自定义字段。</p>
+        <template v-else>
+          <p class="hint">最多 50 条，键名不可重复；保存时整体替换。</p>
+          <ul class="kv-list">
+            <li v-for="(row, index) in kvRows" :key="index" class="kv-row">
+              <input v-model="row.key_label" class="input kv-key" type="text" maxlength="50" placeholder="键名，如 部署平台" :aria-label="`第 ${index + 1} 条键名`" />
+              <input v-model="row.value" class="input kv-value" type="text" maxlength="500" placeholder="值" :aria-label="`第 ${index + 1} 条值`" />
+              <button class="btn btn-ghost" type="button" @click="removeKvRow(index)">删除</button>
+            </li>
+          </ul>
+          <div class="section-actions">
+            <button class="btn" type="button" @click="addKvRow">添加字段</button>
+            <button class="btn btn-primary" type="button" :disabled="kvSaving" @click="saveMetadata">
+              {{ kvSaving ? '保存中…' : '保存自定义字段' }}
+            </button>
+          </div>
+        </template>
+      </section>
+
       <!-- 链接 -->
       <section class="card section" aria-labelledby="links-title">
-        <h2 id="links-title">链接</h2>
+        <h2 id="links-title">链接（仓库 / 官网 / 文档 / 演示）</h2>
         <p v-if="isNew" class="hint">先创建项目，再添加链接。</p>
         <ul v-else class="links">
           <li v-for="(row, index) in links" :key="row.id ?? `new-${index}`" class="link-row">
             <select v-model="row.type" class="select link-type" aria-label="链接类型">
               <option v-for="[value, label] in linkTypeOptions" :key="value" :value="value">{{ label }}</option>
             </select>
-            <input v-model="row.label" class="input link-label" type="text" placeholder="名称（可选）" />
+            <input v-model="row.label" class="input link-label" type="text" maxlength="100" placeholder="名称（可选）" />
             <input v-model="row.url" class="input link-url" type="url" placeholder="https://…" />
             <button class="btn" type="button" :disabled="linkSaving" @click="saveLink(row, index)">保存</button>
             <button class="btn btn-ghost" type="button" :disabled="linkSaving" @click="removeLink(row)">删除</button>
@@ -317,24 +408,19 @@ onMounted(() => void load())
         <button v-if="!isNew" class="btn" type="button" :disabled="linkSaving" @click="addLinkRow">添加链接</button>
       </section>
 
-      <!-- 笔记 -->
+      <!-- 笔记（N:1，独立栏目） -->
       <section class="card section" aria-labelledby="note-title">
-        <h2 id="note-title">笔记（1:1，纯 Markdown）</h2>
-        <p v-if="isNew" class="hint">先创建项目，再编辑笔记。</p>
-        <template v-else>
-          <div class="field">
-            <label class="field-label" for="noteTitle">笔记标题</label>
-            <input id="noteTitle" v-model="noteTitle" class="input" type="text" placeholder="笔记标题（1..200）" />
-          </div>
-          <div class="field">
-            <label class="field-label" for="noteContent">笔记正文</label>
-            <textarea id="noteContent" v-model="noteContent" class="textarea" rows="12" placeholder="Markdown 正文" />
-          </div>
-          <div class="section-actions">
-            <button class="btn btn-primary" type="button" :disabled="noteSaving" @click="saveNote">保存笔记</button>
-            <button class="btn btn-danger" type="button" :disabled="noteSaving" @click="removeNote">删除笔记</button>
-          </div>
-        </template>
+        <h2 id="note-title">笔记</h2>
+        <p class="hint">
+          笔记为独立栏目（与项目 N:1），编辑器在后续批次交付。当前共
+          {{ notes.length }} 篇。
+        </p>
+        <ul v-if="notes.length" class="note-list">
+          <li v-for="note in notes" :key="note.id" class="note-item">
+            <span class="note-title">{{ note.title }}</span>
+            <span class="note-meta">{{ note.publish_status === 'published' ? '已发布' : '草稿' }}</span>
+          </li>
+        </ul>
       </section>
     </div>
   </section>
@@ -415,7 +501,9 @@ onMounted(() => void load())
   font-size: 13px;
   color: var(--c-success);
 }
-.links {
+.links,
+.kv-list,
+.note-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -423,11 +511,20 @@ onMounted(() => void load())
   flex-direction: column;
   gap: var(--sp-1);
 }
-.link-row {
+.link-row,
+.kv-row {
   display: flex;
   gap: var(--sp-1);
   flex-wrap: wrap;
   align-items: center;
+}
+.kv-key {
+  width: 200px;
+  flex: none;
+}
+.kv-value {
+  flex: 1;
+  min-width: 200px;
 }
 .link-type {
   width: 110px;
@@ -441,6 +538,19 @@ onMounted(() => void load())
   flex: 1;
   min-width: 200px;
 }
+.note-item {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: 8px 12px;
+  background: var(--c-fill);
+  border-radius: var(--r-control);
+  font-size: 14px;
+}
+.note-meta {
+  color: var(--c-text-secondary);
+  font-size: 12px;
+}
 @media (max-width: 720px) {
   .grid {
     grid-template-columns: 1fr;
@@ -448,13 +558,16 @@ onMounted(() => void load())
   .span-2 {
     grid-column: span 1;
   }
-  .link-row {
+  .link-row,
+  .kv-row {
     flex-direction: column;
     align-items: stretch;
   }
   .link-type,
   .link-label,
-  .link-url {
+  .link-url,
+  .kv-key,
+  .kv-value {
     width: 100%;
   }
 }

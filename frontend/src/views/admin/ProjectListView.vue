@@ -2,11 +2,16 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { deleteProject, listAdminProjects, restoreProject, updateProject } from '@/api/projects'
-import { PROJECT_STATUS_LABELS, type AdminProjectListItem, type ProjectStatus } from '@/types'
+import {
+  PUBLISH_STATUS_LABELS,
+  type AdminProjectListItem,
+  type PublishStatus,
+} from '@/types'
 import { formatDate } from '@/utils/text'
 import AppBadge from '@/components/AppBadge.vue'
 import ProjectCover from '@/components/ProjectCover.vue'
-import StatusBadge from '@/components/StatusBadge.vue'
+import ProgressBadge from '@/components/ProgressBadge.vue'
+import PublishStatusBadge from '@/components/PublishStatusBadge.vue'
 
 const router = useRouter()
 
@@ -15,7 +20,10 @@ const loading = ref(false)
 const error = ref('')
 const total = ref(0)
 
-const filters = reactive({ search: '', status: '' })
+const filters = reactive<{ search: string; publish_status: PublishStatus | '' }>({
+  search: '',
+  publish_status: '',
+})
 
 // 行选择（供后续批量操作使用，本轮仅提供选择态）。
 const selected = ref<Set<string>>(new Set())
@@ -36,8 +44,9 @@ function toggleSelectAll() {
 
 /** 技术栈折叠摘要：前两项 + 剩余计数（隐藏技术栈列时展示）。 */
 function techTail(item: AdminProjectListItem): string {
-  if (item.technologies.length <= 2) return item.technologies.join(' ')
-  return `${item.technologies.slice(0, 2).join(' ')} +${item.technologies.length - 2}`
+  const stack = item.tech_stack
+  if (stack.length <= 2) return stack.join(' ')
+  return `${stack.slice(0, 2).join(' ')} +${stack.length - 2}`
 }
 
 async function load() {
@@ -49,7 +58,7 @@ async function load() {
       page: 1,
       pageSize: 100,
       search: filters.search || undefined,
-      status: filters.status || undefined,
+      publish_status: filters.publish_status || undefined,
     })
     items.value = res.items
     total.value = res.total
@@ -82,13 +91,13 @@ function confirmDelete(item: AdminProjectListItem) {
 }
 
 function isDeleted(item: AdminProjectListItem): boolean {
-  return item.deletedAt != null
+  return item.deleted_at != null
 }
 
-const statusOptions: Array<{ value: ProjectStatus; label: string }> = [
-  { value: 'draft', label: PROJECT_STATUS_LABELS.draft },
-  { value: 'published', label: PROJECT_STATUS_LABELS.published },
-  { value: 'archived', label: PROJECT_STATUS_LABELS.archived },
+const statusOptions: Array<{ value: PublishStatus; label: string }> = [
+  { value: 'draft', label: PUBLISH_STATUS_LABELS.draft },
+  { value: 'published', label: PUBLISH_STATUS_LABELS.published },
+  { value: 'archived', label: PUBLISH_STATUS_LABELS.archived },
 ]
 
 onMounted(() => void load())
@@ -117,7 +126,7 @@ onMounted(() => void load())
       </div>
       <div class="field">
         <label class="field-label" for="status">状态</label>
-        <select id="status" v-model="filters.status" class="select">
+        <select id="status" v-model="filters.publish_status" class="select">
           <option value="">全部</option>
           <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
@@ -161,30 +170,35 @@ onMounted(() => void load())
             <td class="col-project">
               <div class="project-cell">
                 <div class="thumb">
-                  <ProjectCover :name="item.name" :cover-image="item.coverImage" variant="thumb" />
+                  <ProjectCover :name="item.name" :cover-image="item.cover_image_url" variant="thumb" />
                 </div>
                 <div class="project-text">
                   <div class="project-title">
                     <span class="project-name">{{ item.name }}</span>
                   </div>
                   <div class="project-sub">
-                    <span v-if="item.tagline" class="tagline">{{ item.tagline }}</span>
-                    <span class="fold-updated">{{ formatDate(item.updatedAt) }}</span>
+                    <span v-if="item.summary" class="tagline">{{ item.summary }}</span>
+                    <span class="fold-updated">{{ formatDate(item.updated_at) }}</span>
                     <span class="fold-tech">{{ techTail(item) }}</span>
                   </div>
                 </div>
               </div>
             </td>
             <td class="col-status">
-              <StatusBadge v-if="!isDeleted(item)" :status="item.status" />
+              <template v-if="!isDeleted(item)">
+                <span class="status-cell">
+                  <PublishStatusBadge :status="item.publish_status" />
+                  <ProgressBadge :progress="item.progress" />
+                </span>
+              </template>
               <AppBadge v-else tone="danger">已删除</AppBadge>
             </td>
             <td class="col-updated">
-              <span class="tabular-nums">{{ formatDate(item.updatedAt) }}</span>
+              <span class="tabular-nums">{{ formatDate(item.updated_at) }}</span>
             </td>
             <td class="col-tech">
               <span class="tags">
-                <span v-for="tech in item.technologies" :key="tech" class="tag">{{ tech }}</span>
+                <span v-for="tech in item.tech_stack" :key="tech" class="tag">{{ tech }}</span>
               </span>
             </td>
             <td class="col-actions">
@@ -192,18 +206,18 @@ onMounted(() => void load())
                 <button class="btn btn-sm btn-ghost" type="button" @click="edit(item.id)">编辑</button>
                 <template v-if="!isDeleted(item)">
                   <button
-                    v-if="item.status !== 'published'"
+                    v-if="item.publish_status !== 'published'"
                     class="btn btn-sm"
                     type="button"
-                    @click="runAction(() => updateProject(item.id, { status: 'published' }))"
+                    @click="runAction(() => updateProject(item.id, { publish_status: 'published' }))"
                   >
                     发布
                   </button>
                   <button
-                    v-if="item.status === 'published'"
+                    v-if="item.publish_status === 'published'"
                     class="btn btn-sm"
                     type="button"
-                    @click="runAction(() => updateProject(item.id, { status: 'archived' }))"
+                    @click="runAction(() => updateProject(item.id, { publish_status: 'archived' }))"
                   >
                     下架
                   </button>
@@ -318,7 +332,12 @@ onMounted(() => void load())
   width: 48px;
 }
 .col-status {
-  width: 104px;
+  width: 148px;
+}
+.status-cell {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .col-updated {
   width: 132px;

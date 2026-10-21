@@ -1,3 +1,5 @@
+import type { AdminProjectListItem, ProjectListItem } from './project'
+
 /** 分页元信息（契约冻结：offset 分页）。 */
 export interface PaginationMeta {
   page: number
@@ -41,4 +43,29 @@ export interface ErrorEnvelope {
 export interface PageQuery {
   page?: number
   pageSize?: number
+}
+
+/** 前台列表分段计数（冻结字段名）。 */
+export interface ProjectListCounts {
+  all: number
+  ongoing: number
+  launched: number
+}
+
+/** 后台列表分段计数：`all = draft + published + archived`（含草稿，受 includeDeleted 影响）。 */
+export interface AdminProjectListCounts {
+  all: number
+  draft: number
+  published: number
+  archived: number
+}
+
+/** 后台项目列表信封：分页元信息 + `counts`。 */
+export interface AdminProjectListEnvelope extends ListEnvelope<AdminProjectListItem> {
+  counts: AdminProjectListCounts
+}
+
+/** 前台项目列表信封：分页元信息之外的固定 `counts` 字段。 */
+export interface ProjectListEnvelope<T = ProjectListItem> extends ListEnvelope<T> {
+  counts: ProjectListCounts
 }
