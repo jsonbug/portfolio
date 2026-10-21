@@ -300,7 +300,8 @@ export async function adminProjectRoutes(app: FastifyInstance) {
           data: items.map((item, index) => ({
             project_id: id,
             url: item.url,
-            caption: item.caption ?? null,
+            // 空白图注归一为 null：否则前端要区分 "" 与 null 两种「无图注」
+            caption: item.caption?.trim() ? item.caption.trim() : null,
             sort: item.sort ?? index,
           })),
         });

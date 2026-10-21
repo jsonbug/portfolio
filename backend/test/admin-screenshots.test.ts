@@ -109,6 +109,13 @@ describe("PUT /api/v1/admin/projects/:id/screenshots", () => {
     expect((await putScreenshots(p.id, [shot(1, { caption: "字".repeat(81) })])).statusCode).toBe(400);
   });
 
+  it("空白图注归一为 null（前端只需处理 null 一种「无图注」）", async () => {
+    const p = await createProject(app, token, { name: "空图注" });
+    const res = await putScreenshots(p.id, [shot(1, { caption: "   " }), shot(2)]);
+    const shots = res.json().screenshots as Array<{ caption: string | null }>;
+    expect(shots.map((s) => s.caption)).toEqual([null, null]);
+  });
+
   it("替换后 bump updated_at（前台 recent 排序要能看见内容变更）", async () => {
     const p = await createProject(app, token, { name: "时间戳项目" });
     const before = (await prisma.project.findUniqueOrThrow({ where: { id: p.id } })).updated_at;
