@@ -26,6 +26,9 @@ services:
       HOST: 0.0.0.0
       # SQLite 落在命名卷 sqlite-data（容器内 /data），删容器不丢数据
       DATABASE_URL: file:/data/prod.db
+      # 建链接时的自动外网检查。生产默认开；冒烟/CI 用 `LINK_CHECK_ENABLED=0 ... up -d` 关掉，
+      # 否则脚本建链接那一刻后端会真的去连一次外网，受限网络里会留下 failed 脏状态。
+      LINK_CHECK_ENABLED: ${LINK_CHECK_ENABLED:-1}
     volumes:
       - sqlite-data:/data
     expose:

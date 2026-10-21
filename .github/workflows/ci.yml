@@ -116,6 +116,9 @@ jobs:
         run: docker compose build
 
       - name: 起服务并等 healthy
+        # LINK_CHECK_ENABLED=0：冒烟脚本不该让别人机器上的栈偷偷发外网请求（compose 默认是 1）
+        env:
+          LINK_CHECK_ENABLED: "0"
         run: |
           set -euo pipefail
           docker compose up -d
