@@ -235,10 +235,14 @@ describe('ProjectListView', () => {
 
     await waitFor(() => expect(headers()).toEqual(['名称', '发布状态', '链接']))
     const row = await findRow('项目展示平台')
-    // slug 列没了，但值没丢
-    expect(within(row).getByText('/projects/portfolio-platform')).toBeInTheDocument()
-    // 更新时间降级为「更新 MM-DD / 昨天」
-    expect(within(row).getByText(/^更新 /)).toBeInTheDocument()
+    // slug 与更新时间合并成一行小字（不堆三行），笔记数恒在这里
+    const subline = within(row).getByText((_, el) => el?.className === 'project-sub mono') ?? null
+    expect(subline).not.toBeNull()
+    const text = subline!.textContent ?? ''
+    expect(text).toContain('/projects/portfolio-platform')
+    expect(text).toMatch(/笔记 \d+/)
+    expect(text).toMatch(/更新 /)
+    expect(text.match(/\n/g)).toBeNull()
     // 进展徽标堆叠在发布状态单元格内
     expect(within(row).getByText('进行中')).toBeInTheDocument()
     expect(within(row).getByText('已发布')).toBeInTheDocument()
@@ -273,6 +277,29 @@ describe('ProjectListView', () => {
     expect(
       screen.getByText('分段的维度是「发布状态」，与「进展」正交。归档项目保留数据但前台不可见。'),
     ).toBeInTheDocument()
+  })
+
+  it('名称下方恒显示「笔记 N」（全宽也在）；口径是该项目全部笔记，与分段/搜索无关', async () => {
+    renderList()
+    const portfolio = await findRow('项目展示平台')
+    // 种子：项目展示平台 3 篇（2 已发布 + 1 草稿）、Chart Kit 1 篇、抓取工具箱 0 篇
+    expect(within(portfolio).getByText(/笔记 3/)).toBeInTheDocument()
+    expect(within(await findRow('Chart Kit')).getByText(/笔记 1/)).toBeInTheDocument()
+    expect(within(await findRow('抓取工具箱')).getByText(/笔记 0/)).toBeInTheDocument()
+
+    // 切到「已归档」：旧博客的项目已归档、它的笔记在前台不可见，但 note_count 仍是 1
+    await fireEvent.click(screen.getByRole('button', { name: /^已归档 \d+$/ }))
+    await waitFor(async () => {
+      expect(within(await findRow('旧博客')).getByText(/笔记 1/)).toBeInTheDocument()
+    })
+  })
+
+  it('表头是 <th scope="col">，屏幕阅读器能按列播报', async () => {
+    renderList()
+    await screen.findByText('项目展示平台')
+    const headers = screen.getAllByRole('columnheader')
+    expect(headers.length).toBeGreaterThan(1)
+    expect(headers.every((th) => th.getAttribute('scope') === 'col')).toBe(true)
   })
 
   it('更新时间用相对/紧凑格式（10-18 / 昨天），不是完整日期', async () => {

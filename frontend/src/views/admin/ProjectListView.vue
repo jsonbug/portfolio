@@ -33,6 +33,18 @@ const slugAsSubline = computed(() => !isVisible('slug'))
 const updatedAsSubline = computed(() => !isVisible('updated_at'))
 const progressInStatusCell = computed(() => !isVisible('progress'))
 
+/**
+ * 名称下方的小字：笔记数恒显示，slug / 更新时间只在对应列被隐藏时才并进来。
+ * 三者合并成一行（`·` 分隔），窄屏不会堆成三行。
+ */
+function subline(item: AdminProjectListItem): string {
+  const parts: string[] = []
+  if (slugAsSubline.value) parts.push(`/projects/${item.slug}`)
+  parts.push(`笔记 ${item.note_count}`)
+  if (updatedAsSubline.value) parts.push(`更新 ${formatShortDate(item.updated_at)}`)
+  return parts.join(' · ')
+}
+
 const PAGE_SIZE = 20
 
 const items = ref<AdminProjectListItem[]>([])
@@ -262,7 +274,7 @@ onMounted(() => void load())
       <table class="table">
         <thead>
           <tr>
-            <th class="col-select">
+            <th scope="col" class="col-select">
               <input
                 type="checkbox"
                 :checked="allSelected"
@@ -273,6 +285,7 @@ onMounted(() => void load())
             <th
               v-for="column in columns"
               :key="column.key"
+              scope="col"
               :class="column.className"
               :data-column="column.key"
             >
@@ -310,11 +323,7 @@ onMounted(() => void load())
                   <div v-if="isDeleted(item)" class="project-sub">
                     <AppBadge tone="danger">已删除</AppBadge>
                   </div>
-                  <!-- 笔记数：后台列表契约暂无 note_count，字段到位前不渲染，不用假数据顶 -->
-                  <div v-if="slugAsSubline" class="project-sub mono">/projects/{{ item.slug }}</div>
-                  <div v-if="updatedAsSubline" class="project-sub tabular-nums">
-                    更新 {{ formatShortDate(item.updated_at) }}
-                  </div>
+                  <div class="project-sub" :class="{ mono: slugAsSubline }">{{ subline(item) }}</div>
                 </div>
               </div>
             </td>
