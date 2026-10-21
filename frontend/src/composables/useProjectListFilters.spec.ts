@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_FILTERS,
+  MAX_QUERY_LENGTH,
+  MAX_TECH_COUNT,
   isDefaultFilters,
   parseFilters,
   toQuery,
@@ -68,5 +70,22 @@ describe('isDefaultFilters', () => {
     expect(isDefaultFilters({ ...DEFAULT_FILTERS, tech: ['Vue 3'] })).toBe(false)
     expect(isDefaultFilters({ ...DEFAULT_FILTERS, progress: 'launched' })).toBe(false)
     expect(isDefaultFilters({ ...DEFAULT_FILTERS, sort: 'stars' })).toBe(false)
+  })
+})
+
+describe('parseFilters 的 URL 侧收口', () => {
+  it('搜索词超长截到 200 字', () => {
+    const q = 'a'.repeat(260)
+    expect(parseFilters({ q }).q).toHaveLength(MAX_QUERY_LENGTH)
+  })
+
+  it('超过 50 字的技术栈名直接丢弃（不截断成另一个名字）', () => {
+    const long = 'b'.repeat(51)
+    expect(parseFilters({ tech: [long, 'Vue 3'] }).tech).toEqual(['Vue 3'])
+  })
+
+  it('技术栈最多保留 20 项', () => {
+    const many = Array.from({ length: 25 }, (_, i) => `tech-${i}`)
+    expect(parseFilters({ tech: many }).tech).toHaveLength(MAX_TECH_COUNT)
   })
 })

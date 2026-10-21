@@ -99,11 +99,23 @@ describe('公开项目列表 GET /projects', () => {
     expect(csv.items.map((i) => i.slug).sort()).toEqual(['crawler-tools', 'portfolio-platform'])
   })
 
-  it('technology 不跨项目取并集（命中即算，不要求同时包含）', async () => {
-    const data = await bodyOf<ProjectListEnvelope>(
+  it('technology 精确匹配、大小写敏感（契约 3.1）', async () => {
+    const exact = await bodyOf<ProjectListEnvelope>(
+      call('GET', '/projects', { query: { technology: 'Vue 3' } }),
+    )
+    expect(exact.items.map((i) => i.slug)).toEqual(['portfolio-platform'])
+
+    const lower = await bodyOf<ProjectListEnvelope>(
       call('GET', '/projects', { query: { technology: 'vue 3' } }),
     )
-    expect(data.items.map((i) => i.slug)).toEqual(['portfolio-platform'])
+    expect(lower.items).toHaveLength(0)
+  })
+
+  it('technology 多值为「命中任一」，不要求同时包含', async () => {
+    const data = await bodyOf<ProjectListEnvelope>(
+      call('GET', '/projects', { query: { technology: ['Vue 3', 'SVG'] } }),
+    )
+    expect(data.items.map((i) => i.slug).sort()).toEqual(['chart-kit', 'portfolio-platform'])
   })
 
   it('sort=stars 按 star 降序，recent 按更新时间降序', async () => {
@@ -120,7 +132,7 @@ describe('公开项目列表 GET /projects', () => {
     expect(recent.items[0].slug).toBe('portfolio-platform')
   })
 
-  it('分页参数被夹到合法范围', async () => {
+  it('分页越界一律 400，不夹取（契约 1）', async () => {
     const data = await bodyOf<ProjectListEnvelope>(
       call('GET', '/projects', { query: { page: '2', pageSize: '2' } }),
     )
@@ -128,11 +140,11 @@ describe('公开项目列表 GET /projects', () => {
     expect(data.page).toBe(2)
     expect(data.pageSize).toBe(2)
 
-    const clamped = await bodyOf<ProjectListEnvelope>(
-      call('GET', '/projects', { query: { page: '0', pageSize: '999' } }),
-    )
-    expect(clamped.page).toBe(1)
-    expect(clamped.pageSize).toBe(100)
+    expect(call('GET', '/projects', { query: { page: '0' } }).status).toBe(400)
+    expect(call('GET', '/projects', { query: { pageSize: '999' } }).status).toBe(400)
+    expect(call('GET', '/projects', { query: { pageSize: '0' } }).status).toBe(400)
+    // 页码超过总页数也是 400，不返回空页
+    expect(call('GET', '/projects', { query: { page: '99' } }).status).toBe(400)
   })
 })
 
@@ -174,7 +186,9 @@ describe('公开技术与笔记', () => {
     expect(data.items).not.toContain('Rust') // 草稿项目
     expect(data.items).not.toContain('Go') // 软删除项目
     expect(data.items).not.toContain('Hugo') // 已归档项目
-    expect([...data.items]).toEqual([...data.items].sort((a, b) => a.localeCompare(b)))
+    // 按码点升序（默认 sort），不随环境 locale 变化
+    expect([...data.items]).toEqual([...data.items].sort())
+    expect(data.items).toEqual(['Fastify', 'Python', 'Rollup', 'SVG', 'TypeScript', 'Vite', 'Vue 3', 'asyncio'])
   })
 
   it('GET /notes 只返回公开项目下的已发布笔记', async () => {

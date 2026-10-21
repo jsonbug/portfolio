@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import ProgressBadge from './ProgressBadge.vue'
 import ProjectCover from './ProjectCover.vue'
+import { safeHttpUrl } from '@/utils/link'
 import { formatDate } from '@/utils/text'
 import type { ProjectListItem } from '@/types'
 
@@ -12,8 +13,18 @@ import type { ProjectListItem } from '@/types'
  */
 const props = defineProps<{ item: ProjectListItem }>()
 
-const repoLink = computed(() => props.item.links.find((link) => link.type === 'repo') ?? null)
-const siteLink = computed(() => props.item.links.find((link) => link.type === 'site') ?? null)
+const repoLink = computed(() => {
+  const link = props.item.links.find((item) => item.type === 'repo')
+  const url = safeHttpUrl(link?.url)
+  return link && url ? { ...link, url } : null
+})
+const siteLink = computed(() => {
+  const link = props.item.links.find((item) => item.type === 'site')
+  const url = safeHttpUrl(link?.url)
+  return link && url ? { ...link, url } : null
+})
+/** 卡片标题的 id 供卡片链接用 aria-labelledby 指过来（摘要仍留在可访问名里）。 */
+const titleId = computed(() => `project-card-title-${props.item.id}`)
 /** 手填的 last_updated_at 优先，没有则退回记录更新时间。 */
 const updatedAt = computed(() => props.item.last_updated_at ?? props.item.updated_at)
 const updatedText = computed(() => formatDate(updatedAt.value))
@@ -24,12 +35,12 @@ const updatedText = computed(() => formatDate(updatedAt.value))
     <RouterLink
       class="card-hit"
       :to="{ name: 'project-detail', params: { slug: item.slug } }"
-      :aria-label="`查看项目：${item.name}`"
+      :aria-labelledby="titleId"
     >
       <ProjectCover :name="item.name" :cover-image="item.cover_image_url" variant="card" />
       <div class="card-body">
         <div class="card-head">
-          <h2 class="card-name">{{ item.name }}</h2>
+          <h2 :id="titleId" class="card-name">{{ item.name }}</h2>
           <ProgressBadge :progress="item.progress" />
         </div>
         <p v-if="item.summary" class="card-summary">{{ item.summary }}</p>
@@ -50,6 +61,7 @@ const updatedText = computed(() => formatDate(updatedAt.value))
         :href="repoLink.url"
         target="_blank"
         rel="noopener noreferrer"
+        :aria-label="`仓库 · ${item.name}（新窗口打开）`"
         >仓库<span class="card-link-mark" aria-hidden="true">↗</span></a
       >
       <a
@@ -58,6 +70,7 @@ const updatedText = computed(() => formatDate(updatedAt.value))
         :href="siteLink.url"
         target="_blank"
         rel="noopener noreferrer"
+        :aria-label="`官网 · ${item.name}（新窗口打开）`"
         >官网<span class="card-link-mark" aria-hidden="true">↗</span></a
       >
     </div>

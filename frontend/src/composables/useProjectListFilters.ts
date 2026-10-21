@@ -40,6 +40,11 @@ export const DEFAULT_FILTERS: ProjectListFilters = {
   sort: 'recent',
 }
 
+/** URL 侧收口（URL 是唯一真源，所以边界必须住在这个纯函数里，手改 URL 也挡得住）。 */
+export const MAX_QUERY_LENGTH = 200
+export const MAX_TECH_NAME_LENGTH = 50
+export const MAX_TECH_COUNT = 20
+
 const PROGRESS_VALUES = Object.keys(PROGRESS_LABELS) as Progress[]
 const SORT_VALUES = SORT_OPTIONS.map((o) => o.value)
 
@@ -51,15 +56,16 @@ function asArray(value: LocationQueryRaw[string]): string[] {
 
 /** 解析 URL query；非法值静默忽略（不抛错、不阻塞首次渲染）。 */
 export function parseFilters(query: LocationQueryRaw): ProjectListFilters {
-  const q = asArray(query.q).join(' ').trim()
+  const q = asArray(query.q).join(' ').trim().slice(0, MAX_QUERY_LENGTH)
   const tech = [
     ...new Set(
       asArray(query.tech)
         .flatMap((v) => v.split(','))
         .map((v) => v.trim())
-        .filter(Boolean),
+        // 超长技术栈名不可能是后台维护的值，直接丢弃（而不是截断成另一个名字）
+        .filter((v) => v.length > 0 && v.length <= MAX_TECH_NAME_LENGTH),
     ),
-  ]
+  ].slice(0, MAX_TECH_COUNT)
   const rawProgress = asArray(query.progress)[0]
   const progress =
     rawProgress && (PROGRESS_VALUES as string[]).includes(rawProgress)

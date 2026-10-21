@@ -283,6 +283,10 @@ export function createDbState(now = Date.now()): DbState {
     url: string,
     sort: number,
     label: string | null = null,
+    health: { last_status: LinkStatus | null; last_http_status: number | null } = {
+      last_status: null,
+      last_http_status: null,
+    },
   ): DbLink => ({
     id: uid('link'),
     project_id: projectId,
@@ -290,9 +294,9 @@ export function createDbState(now = Date.now()): DbState {
     label,
     url,
     sort,
-    last_status: null,
-    last_http_status: null,
-    last_checked_at: null,
+    last_status: health.last_status,
+    last_http_status: health.last_http_status,
+    last_checked_at: health.last_status === null ? null : iso(now - 2 * DAY),
     created_at: iso(now - 30 * DAY),
   })
 
@@ -301,7 +305,10 @@ export function createDbState(now = Date.now()): DbState {
     link(SEED_IDS.portfolio, 'site', 'https://portfolio.example.com', 1, '官网'),
     link(SEED_IDS.chart, 'repo', 'https://github.com/jsonbug/chart-kit', 0, 'GitHub'),
     link(SEED_IDS.chart, 'site', 'https://chart.example.com', 1, null),
-    link(SEED_IDS.chart, 'docs', 'https://chart.example.com/docs', 2, '文档'),
+    link(SEED_IDS.chart, 'docs', 'https://chart.example.com/docs', 2, '文档', {
+      last_status: 'failed',
+      last_http_status: 502,
+    }),
     link(SEED_IDS.crawler, 'repo', 'https://github.com/jsonbug/crawler-tools', 0, null),
     link(SEED_IDS.oldBlog, 'site', 'https://blog.example.com', 0, null),
     link(SEED_IDS.deleted, 'repo', 'https://github.com/jsonbug/deleted-tool', 0, null),
@@ -462,10 +469,15 @@ export function toNoteDetail(state: DbState, n: DbNote): NoteDetail {
   return { ...toNoteSummary(state, n), body_md: n.body_md }
 }
 
+/** 笔记排序键：published_at 缺失时回退 created_at（契约 3.3）。 */
+function noteRecency(n: DbNote): string {
+  return n.published_at ?? n.created_at
+}
+
 function publishedNotesOf(state: DbState, projectId: string): NoteSummary[] {
   return state.notes
     .filter((n) => n.project_id === projectId && n.publish_status === 'published')
-    .sort((a, b) => (b.published_at ?? '').localeCompare(a.published_at ?? ''))
+    .sort((a, b) => noteRecency(b).localeCompare(noteRecency(a)))
     .map((n) => toNoteSummary(state, n))
 }
 
@@ -600,13 +612,12 @@ export function listPublicProjects(
   params: PublicProjectListParams = {},
 ): ProjectListEnvelope {
   const { search = '', technology = [], progress, sort = 'recent', page = 1, pageSize = 20 } = params
-  const techs = technology.map((t) => t.trim().toLowerCase()).filter(Boolean)
+  // 契约 3.1：技术栈精确匹配、大小写敏感（`Vue` 与 `vue` 是两条不同记录）。
+  const techs = technology.map((t) => t.trim()).filter(Boolean)
 
   const visible = state.projects.filter(isProjectVisible)
   const searched = visible.filter((p) => matches([p.name, p.summary], search))
-  const byTech = techs.length
-    ? searched.filter((p) => p.tech_stack.some((t) => techs.includes(t.toLowerCase())))
-    : searched
+  const byTech = techs.length ? searched.filter((p) => p.tech_stack.some((t) => techs.includes(t))) : searched
 
   const counts = {
     all: byTech.length,
@@ -617,7 +628,8 @@ export function listPublicProjects(
   const segmented = progress ? byTech.filter((p) => p.progress === progress) : byTech
   const sorted = [...segmented].sort((a, b) => {
     if (sort === 'stars') {
-      const diff = (b.stars ?? 0) - (a.stars ?? 0)
+      // 契约 3.1：stars 为 null 排在最后（兜底 -1，同分回 recent）。
+      const diff = (b.stars ?? -1) - (a.stars ?? -1)
       if (diff !== 0) return diff
     }
     return recentKey(b).localeCompare(recentKey(a))
@@ -712,7 +724,7 @@ export function listPublicNotes(
     .filter((n) => isNoteVisible(state, n))
     .filter((n) => matches([n.title, n.body_md], search))
     .filter((n) => (tag ? n.tags.includes(tag) : true))
-    .sort((a, b) => (b.published_at ?? '').localeCompare(a.published_at ?? ''))
+    .sort((a, b) => noteRecency(b).localeCompare(noteRecency(a)))
   const envelope = paginate(rows, page, pageSize)
   return { ...envelope, items: envelope.items.map((n) => toNoteSummary(state, n)) }
 }
@@ -737,7 +749,8 @@ export function listTechnologies(state: DbState): string[] {
   for (const p of state.projects.filter(isProjectVisible)) {
     for (const t of p.tech_stack) set.add(t)
   }
-  return [...set].sort((a, b) => a.localeCompare(b))
+  // 契约 3.1：按名称码点升序（默认 sort 即码点序，不用 localeCompare，避免随环境变化）。
+  return [...set].sort()
 }
 
 // ---------------------------------------------------------------- 写入

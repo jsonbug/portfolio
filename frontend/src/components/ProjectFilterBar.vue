@@ -103,6 +103,7 @@ function clearAll(): void {
           v-model="searchText"
           class="input search-input"
           type="search"
+          maxlength="200"
           aria-label="搜索项目"
           placeholder="搜索项目名称或简介"
         />

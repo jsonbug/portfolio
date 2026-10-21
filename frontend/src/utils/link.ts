@@ -14,3 +14,13 @@ export function bareDomain(url: string): string {
     return url
   }
 }
+
+/**
+ * 只放行 `http(s)` 绝对地址，其余（`javascript:`、`data:`、相对路径注入等）一律降级为 null。
+ *
+ * 写入侧已经在校验，但历史数据 / 迁移搬运可能绕过（见评审 P2-5），渲染侧再兜一层最便宜。
+ */
+export function safeHttpUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  return /^https?:\/\//i.test(url.trim()) ? url.trim() : null
+}

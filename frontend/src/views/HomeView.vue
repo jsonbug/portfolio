@@ -64,7 +64,7 @@ const truncated = computed(() => total.value > LIST_PAGE_SIZE)
 const showEmpty = computed(() => !loading.value && !error.value && items.value.length === 0)
 /** 供读屏播报结果数量变化（视觉上无对应元素）。 */
 const resultAnnouncement = computed(() =>
-  loading.value ? '正在加载项目' : `共 ${items.value.length} 个结果`,
+  loading.value ? '正在加载项目' : `共 ${total.value} 个结果`,
 )
 
 /**
@@ -85,7 +85,9 @@ watch(
 )
 
 function apply(patch: Partial<ProjectListFilters>): void {
-  const base = pending ?? filters.value
+  // 基准取实时路由 query 解析出来的值（不是可能过期的 computed）；
+  // `pending` 只用来补「replace 还没落定」的那段时间。
+  const base = pending ?? parseFilters(router.currentRoute.value.query)
   const next: ProjectListFilters = { ...base, ...patch }
   const current = JSON.stringify(toQuery(base))
   const target = JSON.stringify(toQuery(next))
@@ -96,7 +98,7 @@ function apply(patch: Partial<ProjectListFilters>): void {
 
 /** 技术栈开合：以「最后一次提交的筛选值」为基准算下一份数组，连点也不会丢改动。 */
 function toggleTech(tech: string): void {
-  const base = pending ?? filters.value
+  const base = pending ?? parseFilters(router.currentRoute.value.query)
   const next = base.tech.includes(tech)
     ? base.tech.filter((t) => t !== tech)
     : [...base.tech, tech]
@@ -112,10 +114,10 @@ function clearFilters(): void {
   <main class="home">
     <header class="home-header">
       <h1 class="type-display">项目</h1>
-      <p v-if="!showSkeleton && counts.all > 0" class="home-summary">
-        <span class="tabular-nums">{{ counts.all }} 个项目</span>
+      <p v-if="!showSkeleton && total > 0" class="home-summary">
+        <span class="tabular-nums">{{ total }} 个项目</span>
         <span v-if="recentText" aria-hidden="true"> · </span>
-        <span v-if="recentText">最近更新 {{ recentText }}</span>
+        <span v-if="recentText">{{ recentText }}</span>
       </p>
     </header>
 

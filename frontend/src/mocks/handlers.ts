@@ -267,10 +267,36 @@ function validateMetadataInput(input: unknown): ErrorDetail[] {
 
 // ---------- 查询参数 ----------
 
-function parsePage(value: string | null, fallback: number, min: number, max: number): number {
-  const n = Number(value ?? fallback)
-  if (Number.isNaN(n)) return fallback
-  return Math.min(Math.max(Math.trunc(n), min), max)
+/**
+ * 解析分页参数：**不夹取**（契约 1：越界一律 400）。
+ *
+ * 与真实后端一致：`page < 1`、`pageSize` 不在 1..100、非整数都算参数错误。
+ */
+function parsePage(
+  query: URLSearchParams,
+): { page: number; pageSize: number } | Response {
+  const details: ErrorDetail[] = []
+  const page = Number(query.get('page') ?? 1)
+  const pageSize = Number(query.get('pageSize') ?? 20)
+  if (!Number.isInteger(page) || page < 1) {
+    details.push({ field: 'page', code: 'RANGE', message: '必须是 ≥ 1 的整数' })
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    details.push({ field: 'pageSize', code: 'RANGE', message: '必须是 1..100 的整数' })
+  }
+  if (details.length) return errorResponse(400, 'VALIDATION_ERROR', '请求参数校验失败', details)
+  return { page, pageSize }
+}
+
+/** 页码超出最后一页 → 400（契约 1：越界不夹取、不返回空页）。 */
+function beyondLastPage(page: number, totalPages: number): boolean {
+  return page > Math.max(1, totalPages)
+}
+
+function pageOutOfRange(totalPages: number): Response {
+  return errorResponse(400, 'VALIDATION_ERROR', '请求参数校验失败', [
+    { field: 'page', code: 'RANGE', message: `超出总页数（${totalPages}）` },
+  ])
 }
 
 /** 支持 `?technology=A&technology=B` 与 `?technology=A,B` 两种写法（契约 3.1）。 */
@@ -334,16 +360,20 @@ function notFound(what = '资源'): Response {
 
 /** 契约 3.1：前台项目列表 + 分段计数。 */
 function handlePublicProjectList(query: URLSearchParams): Response {
-  return ok(
-    listPublicProjects(state, {
-      page: parsePage(query.get('page'), 1, 1, Number.MAX_SAFE_INTEGER),
-      pageSize: parsePage(query.get('pageSize'), 20, 1, 100),
-      search: query.get('search') ?? undefined,
-      technology: queryList(query, 'technology'),
-      progress: queryEnum(query, 'progress', PROGRESSES),
-      sort: queryEnum(query, 'sort', ['recent', 'stars'] as const),
-    }),
-  )
+  const paging = parsePage(query)
+  if (paging instanceof Response) return paging
+  const envelope = listPublicProjects(state, {
+    page: paging.page,
+    pageSize: paging.pageSize,
+    search: query.get('search') ?? undefined,
+    technology: queryList(query, 'technology'),
+    progress: queryEnum(query, 'progress', PROGRESSES),
+    sort: queryEnum(query, 'sort', ['recent', 'stars'] as const),
+  })
+  if (beyondLastPage(paging.page, envelope.totalPages)) {
+    return pageOutOfRange(envelope.totalPages)
+  }
+  return ok(envelope)
 }
 
 function handlePublicProjectDetail(resource: string): Response {
@@ -371,16 +401,20 @@ function handleAdmin(req: MockRequest): Response {
   // ---- 项目 ----
   if (path === '/admin/projects') {
     if (method === 'GET') {
-      return ok(
-        listAdminProjects(state, {
-          page: parsePage(query.get('page'), 1, 1, Number.MAX_SAFE_INTEGER),
-          pageSize: parsePage(query.get('pageSize'), 20, 1, 100),
-          publish_status: queryEnum(query, 'publish_status', PUBLISH_STATUSES),
-          progress: queryEnum(query, 'progress', PROGRESSES),
-          search: query.get('search') ?? undefined,
-          includeDeleted: queryBool(query, 'includeDeleted'),
-        }),
-      )
+      const paging = parsePage(query)
+      if (paging instanceof Response) return paging
+      const envelope = listAdminProjects(state, {
+        page: paging.page,
+        pageSize: paging.pageSize,
+        publish_status: queryEnum(query, 'publish_status', PUBLISH_STATUSES),
+        progress: queryEnum(query, 'progress', PROGRESSES),
+        search: query.get('search') ?? undefined,
+        includeDeleted: queryBool(query, 'includeDeleted'),
+      })
+      if (beyondLastPage(paging.page, envelope.totalPages)) {
+        return pageOutOfRange(envelope.totalPages)
+      }
+      return ok(envelope)
     }
     if (method === 'POST') {
       const details = validateProjectInput(body)
@@ -483,15 +517,19 @@ function handleAdmin(req: MockRequest): Response {
   // ---- 笔记（N:1） ----
   if (path === '/admin/notes') {
     if (method === 'GET') {
-      return ok(
-        listAdminNotes(state, {
-          page: parsePage(query.get('page'), 1, 1, Number.MAX_SAFE_INTEGER),
-          pageSize: parsePage(query.get('pageSize'), 20, 1, 100),
-          project_id: query.get('project_id') ?? undefined,
-          publish_status: queryEnum(query, 'publish_status', NOTE_STATUSES),
-          search: query.get('search') ?? undefined,
-        }),
-      )
+      const paging = parsePage(query)
+      if (paging instanceof Response) return paging
+      const envelope = listAdminNotes(state, {
+        page: paging.page,
+        pageSize: paging.pageSize,
+        project_id: query.get('project_id') ?? undefined,
+        publish_status: queryEnum(query, 'publish_status', NOTE_STATUSES),
+        search: query.get('search') ?? undefined,
+      })
+      if (beyondLastPage(paging.page, envelope.totalPages)) {
+        return pageOutOfRange(envelope.totalPages)
+      }
+      return ok(envelope)
     }
     if (method === 'POST') {
       const details = validateNoteInput(body)
@@ -556,14 +594,18 @@ export function handleMockRequest(req: MockRequest): Response {
     return handlePublicProjectDetail(publicProject.slug)
   }
   if (method === 'GET' && path === '/notes') {
-    return ok(
-      listPublicNotes(state, {
-        page: parsePage(req.query.get('page'), 1, 1, Number.MAX_SAFE_INTEGER),
-        pageSize: parsePage(req.query.get('pageSize'), 20, 1, 100),
-        search: req.query.get('search') ?? undefined,
-        tag: req.query.get('tag') ?? undefined,
-      }),
-    )
+    const paging = parsePage(req.query)
+    if (paging instanceof Response) return paging
+    const envelope = listPublicNotes(state, {
+      page: paging.page,
+      pageSize: paging.pageSize,
+      search: req.query.get('search') ?? undefined,
+      tag: req.query.get('tag') ?? undefined,
+    })
+    if (beyondLastPage(paging.page, envelope.totalPages)) {
+      return pageOutOfRange(envelope.totalPages)
+    }
+    return ok(envelope)
   }
   const publicNote = matchRoute('/notes/:slug', path)
   if (method === 'GET' && publicNote) {
