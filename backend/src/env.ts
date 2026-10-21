@@ -1,6 +1,7 @@
 // 环境变量加载：用 Node 内置 loadEnvFile，零第三方依赖（Node ≥ 20.12）
 // 注意：loadEnvFile 不会覆盖 process.env 中已存在的变量（测试可在导入前预设）。
 import { loadEnvFile } from "node:process";
+import { checkSecrets, formatIssues } from "./lib/env-check.js";
 
 try {
   loadEnvFile();
@@ -44,3 +45,13 @@ export const env = {
         "scrypt$0c018e1a47e4503e5f8b52c79cb7f7f9$6286fb06632109c6e98a2f5e2b3799290883f88ae4a17db8c35a6606a8e2fdb6dc330f7631437a77660a1a9fcf63993f54d55d5c6391f5919f17cdb8767198db",
   ),
 };
+
+// 启动期校验：配置缺失由 required() 兜，配置填坏（短密钥、被插值吃掉的口令摘要）在这里兜。
+// 宁可起不来，也不要带着会一直 401 的配置对外服务。
+const issues = checkSecrets(
+  { authSecret: env.authSecret, adminPasswordHash: env.adminPasswordHash, authTtlSeconds: env.authTtlSeconds },
+  env.nodeEnv,
+);
+if (issues.length > 0) {
+  throw new Error(formatIssues(issues));
+}
