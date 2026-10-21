@@ -58,6 +58,19 @@ describe('HomeView 列表', () => {
     expect(screen.getByText(/最近更新 \d+ 天前|今天更新/)).toBeInTheDocument()
   })
 
+  it('英雄区三格是「全部项目 / 已上线 / 笔记」——不放「进行中」（分段里已有）', async () => {
+    await renderHome()
+    await waitForList()
+
+    const stats = document.querySelectorAll('.home-stat')
+    expect(Array.from(stats).map((el) => el.textContent?.trim())).toEqual([
+      // 种子：3 个可见项目（2 进行中 1 已上线）、3 篇公开笔记（草稿与归档项目下的不算）
+      '全部项目3',
+      '已上线1',
+      '笔记3',
+    ])
+  })
+
   it('首屏先渲染骨架，加载完成后换成卡片', async () => {
     await renderHome()
     expect(document.querySelectorAll('.skeleton-card').length).toBeGreaterThan(0)

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { listPublicNotes } from '@/api/notes'
@@ -34,6 +34,46 @@ const admin = (method: string, path: string, body?: unknown) =>
     headers: { authorization: 'Bearer mock-token-test' },
     body,
   })
+
+describe('NoteDetailView 三栏（09/10 稿）', () => {
+  beforeEach(() => resetMockDb())
+
+  it('左栏是笔记树：搜索框 + 按项目分组 + 当前篇白卡', async () => {
+    await renderNote('why-mock-first')
+
+    const tree = await screen.findByRole('complementary', { name: '笔记树' })
+    expect(within(tree).getByRole('searchbox', { name: '搜索笔记' })).toBeInTheDocument()
+    const list = within(tree).getByRole('navigation', { name: '笔记列表' })
+    // 按项目分组：分组标题是项目名
+    expect(await within(list).findByRole('heading', { name: '项目展示平台' })).toBeInTheDocument()
+    const current = await within(list).findByRole('button', { name: /为什么先做 mock-first 联调/ })
+    expect(current).toHaveAttribute('aria-current', 'true')
+    expect(current).toHaveClass('note-link--active')
+  })
+
+  it('右栏同时放「本页目录」与「所属项目」（目录不再在左栏）', async () => {
+    await renderNote('v1-2-notes')
+
+    const right = await screen.findByRole('complementary', { name: '', hidden: false }).catch(() => null)
+    void right
+    const toc = await screen.findByRole('region', { name: '本页目录' })
+    const project = await screen.findByRole('region', { name: '所属项目' })
+    // 同一列（祖先 aside 相同），且不在「笔记树」里
+    expect(toc.closest('aside')).toBe(project.closest('aside'))
+    expect(toc.closest('aside')?.getAttribute('aria-label')).not.toBe('笔记树')
+  })
+
+  it('点树里的另一篇会切到对应路由', async () => {
+    const router = await renderNote('why-mock-first')
+    const tree = await screen.findByRole('complementary', { name: '笔记树' })
+    const other = await within(tree).findByRole('button', { name: /v1.2 改造笔记/ })
+
+    await fireEvent.click(other)
+
+    await waitFor(() => expect(router.currentRoute.value.params.slug).toBe('v1-2-notes'))
+    expect(router.currentRoute.value.name).toBe('note-detail')
+  })
+})
 
 describe('NoteDetailView', () => {
   beforeEach(() => resetMockDb())

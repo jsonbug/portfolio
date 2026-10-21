@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getPublicNote, listPublicNotes } from '@/api/notes'
 import { getPublicProject } from '@/api/projects'
+import NoteTree from '@/components/NoteTree.vue'
 import ProgressBadge from '@/components/ProgressBadge.vue'
 import { renderMarkdown } from '@/utils/markdown'
 import { formatDate, readingTimeMinutes } from '@/utils/text'
@@ -20,6 +21,12 @@ const project = ref<ProjectDetail | null>(null)
 
 /** 上下篇：在已取的前 100 篇里按 published_at 倒序定位相邻两条。 */
 const siblings = ref<NoteSummary[]>([])
+
+/** 左栏笔记树：搜索词独立于上下篇，树里过滤不影响「相邻两条」的口径。 */
+const NOTES_PAGE_SIZE = 100
+const treeItems = ref<NoteSummary[]>([])
+const treeTotal = ref(0)
+const treeQuery = ref('')
 
 const bodyHtml = computed(() => (note.value ? renderMarkdown(note.value.body_md) : ''))
 const readMinutes = computed(() => (note.value ? readingTimeMinutes(note.value.body_md) : 0))
@@ -113,13 +120,44 @@ onMounted(async () => {
   window.addEventListener('scroll', syncActiveHeading, { passive: true })
   window.addEventListener('resize', syncActiveHeading, { passive: true })
   void load(props.slug)
+  await loadSiblings()
+  await loadTree('')
+})
+
+async function loadSiblings(): Promise<void> {
   try {
-    const res = await listPublicNotes({ page: 1, pageSize: 100 })
+    const res = await listPublicNotes({ page: 1, pageSize: NOTES_PAGE_SIZE })
     siblings.value = res.items
   } catch {
     siblings.value = []
   }
-})
+}
+
+async function loadTree(search: string): Promise<void> {
+  try {
+    const res = await listPublicNotes({
+      search: search || undefined,
+      page: 1,
+      pageSize: NOTES_PAGE_SIZE,
+    })
+    treeItems.value = res.items
+    treeTotal.value = res.total
+  } catch {
+    treeItems.value = []
+    treeTotal.value = 0
+  }
+}
+
+function onTreeSearch(value: string): void {
+  treeQuery.value = value
+  void loadTree(value)
+}
+
+/** 选中树里的另一篇：换路由（不动页内锚点），搜索词跟着 URL 走。 */
+function onTreeSelect(slug: string): void {
+  const query = treeQuery.value ? { q: treeQuery.value } : undefined
+  void router.push({ name: 'note-detail', params: { slug }, query })
+}
 
 watch(
   () => props.slug,
@@ -158,28 +196,36 @@ onBeforeUnmount(() => {
         </ul>
       </header>
 
-      <div class="layout" :class="{ 'layout--two': !toc.length }">
-        <nav v-if="toc.length" class="side side--left" aria-labelledby="toc-title">
-          <section class="card panel" aria-labelledby="toc-title">
-            <h2 id="toc-title" class="panel-title type-small">本页目录</h2>
-            <ul class="toc">
-              <li v-for="item in toc" :key="item.id" :class="`toc-${item.level}`">
-                <a
-                  :href="`#${item.id}`"
-                  :aria-current="item.id === activeId ? 'location' : undefined"
-                >
-                  {{ item.text }}
-                </a>
-              </li>
-            </ul>
-          </section>
-        </nav>
+      <!-- 09/10 稿：左栏笔记树、中栏正文、右栏「本页目录」+「所属项目」 -->
+      <div class="layout">
+        <aside class="side side--left" aria-label="笔记树">
+          <NoteTree
+            :items="treeItems"
+            :selected-slug="note.slug"
+            :search="treeQuery"
+            :total="treeTotal"
+            :page-size="NOTES_PAGE_SIZE"
+            @update:search="onTreeSearch"
+            @select="onTreeSelect"
+          />
+        </aside>
 
         <article class="card article">
           <div ref="bodyEl" class="markdown" v-html="bodyHtml" />
         </article>
 
         <aside class="side" aria-live="polite">
+          <section v-if="toc.length" class="card panel" aria-labelledby="toc-title">
+            <h2 id="toc-title" class="panel-title type-small">本页目录</h2>
+            <ul class="toc">
+              <li v-for="item in toc" :key="item.id" :class="`toc-${item.level}`">
+                <a :href="`#${item.id}`" :aria-current="item.id === activeId ? 'location' : undefined">
+                  {{ item.text }}
+                </a>
+              </li>
+            </ul>
+          </section>
+
           <section class="card panel" aria-labelledby="project-title">
             <h2 id="project-title" class="panel-title type-small">所属项目</h2>
             <RouterLink :to="{ name: 'project-detail', params: { slug: note.project.slug } }" class="project-card">
@@ -264,9 +310,9 @@ onBeforeUnmount(() => {
   border-radius: var(--r-tag);
 }
 .layout {
-  /* 09/10 稿：三栏（目录 / 正文 / 所属项目），三栏同一行顶部对齐 */
+  /* 09/10 稿：左栏笔记树、中栏正文、右栏目录 + 所属项目，同一行顶部对齐 */
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr) 260px;
+  grid-template-columns: 240px minmax(0, 1fr) 240px;
   gap: var(--space-24);
   align-items: start;
 }
@@ -283,43 +329,33 @@ onBeforeUnmount(() => {
   grid-column: 3;
   grid-row: 1;
 }
-/* 目录为空（正文没有 h2/h3）时退成两栏，不留 200px 空洞 */
-.layout--two {
-  grid-template-columns: minmax(0, 1fr) 260px;
-}
-.layout--two > .article {
-  grid-column: 1;
-}
-.layout--two > .side:not(.side--left) {
-  grid-column: 2;
-}
 .side--left {
   display: flex;
   flex-direction: column;
   gap: var(--space-16);
   position: sticky;
   top: var(--space-24);
+  max-height: calc(100vh - var(--space-48));
+  overflow: auto;
 }
 @media (max-width: 1180px) {
-  .layout,
-  .layout--two {
-    grid-template-columns: 180px minmax(0, 1fr);
+  /* 中窄屏：笔记树落到正文上方整宽，右栏（目录 + 所属项目）留在正文右侧 */
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 240px;
   }
-  /* 中窄屏：所属项目卡落到正文下方，目录仍在左栏 */
-  .layout > .article,
-  .layout--two > .article {
-    grid-column: 2;
+  .layout > .side--left {
+    grid-column: 1;
+    grid-row: 1;
+    position: static;
+    max-height: none;
   }
-  .layout > .side:not(.side--left),
-  .layout--two > .side:not(.side--left) {
-    grid-column: 2;
+  .layout > .article {
+    grid-column: 1;
     grid-row: 2;
   }
-  .layout--two > .article {
-    grid-column: 1;
-  }
-  .layout--two > .side:not(.side--left) {
-    grid-column: 1;
+  .layout > .side:not(.side--left) {
+    grid-column: 2;
+    grid-row: 1 / span 2;
   }
 }
 @media (max-width: 899px) {

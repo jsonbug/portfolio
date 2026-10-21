@@ -14,8 +14,12 @@ export const SCREENSHOT_CAPTION_MAX = 80
 /** 截图 URL 上限。 */
 export const SCREENSHOT_URL_MAX = 2048
 
-/** 指标卡条目数上限：超过即整批 400，界面在到上限时就该禁用「添加」。 */
-export const METRIC_MAX = 2
+/**
+ * 指标卡（`kind === 'metric'`）的条目上限：超过即整批 400，界面在到上限时就该禁用「添加」。
+ *
+ * 命名与契约 §4.1.1 的 `METRIC_LIMITS.max` 对齐；前台指标条按实际条数渲染，不满不补空位。
+ */
+export const METRIC_LIMITS = { max: 2 } as const
 
 /** 指标卡标签长度上限（比 `meta` 的 50 严得多，格子放不下更长的）。 */
 export const METRIC_KEY_LABEL_MAX = 16

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getPublicNote, listPublicNotes } from '@/api/notes'
+import NoteTree from '@/components/NoteTree.vue'
 import { renderMarkdown } from '@/utils/markdown'
-import { debounce } from '@/utils/timing'
-import { MAX_SEARCH_LENGTH, clampSearch, formatDate, readingTimeMinutes } from '@/utils/text'
+import { clampSearch, formatDate, readingTimeMinutes } from '@/utils/text'
 import type { NoteDetail, NoteSummary } from '@/types'
 
 /** 契约 §3.3：`/notes` 单页上限 100，超出必须明确提示。 */
@@ -28,24 +28,6 @@ const selectedSlug = computed(() => {
   const note = route.query.note
   return typeof note === 'string' && note ? note : (items.value[0]?.slug ?? '')
 })
-
-/** 左栏按项目分组，保持后端返回（published_at 倒序）的顺序。 */
-const groups = computed(() => {
-  const map = new Map<string, { name: string; notes: NoteSummary[] }>()
-  for (const note of items.value) {
-    const group = map.get(note.project.slug) ?? { name: note.project.name, notes: [] }
-    group.notes.push(note)
-    map.set(note.project.slug, group)
-  }
-  return [...map.entries()].map(([slug, group]) => ({ slug, ...group }))
-})
-
-const truncated = computed(() => total.value > NOTES_PAGE_SIZE)
-
-/** 当前选中的笔记被搜索/分页挡在列表外（正文仍可看，但左栏里找不到它）。 */
-const selectedHidden = computed(
-  () => !!selectedSlug.value && items.value.length > 0 && !items.value.some((n) => n.slug === selectedSlug.value),
-)
 
 /** 正文区：切换笔记后把焦点交给它，键盘用户不用再 Tab 一大圈。 */
 const bodyRef = ref<HTMLElement | null>(null)
@@ -97,14 +79,15 @@ async function loadDetail(slug: string): Promise<void> {
   }
 }
 
-// 搜索 300ms 防抖后落到 URL，URL 仍是唯一真源；输入框与 URL 共用 clampSearch 收口。
-const commitSearch = debounce((value: string) => {
+// 搜索 300ms 防抖由 NoteTree 负责；这里只把结果落到 URL，URL 仍是唯一真源。
+function onTreeSearch(value: string): void {
   const q = clampSearch(value)
   void router.replace({ query: { ...route.query, q: q || undefined } })
-}, 300)
-onUnmounted(() => commitSearch.cancel())
+}
 
-watch(searchText, (value) => commitSearch(value))
+function onTreeSelect(slug: string): void {
+  void router.replace({ query: { ...route.query, note: slug } })
+}
 watch(() => route.query.q, (value) => {
   const next = typeof value === 'string' ? value : ''
   if (next !== searchText.value) searchText.value = next
@@ -133,45 +116,19 @@ watch(selectedSlug, async () => {
       <p class="type-small notes-summary">{{ total }} 篇 · 按项目分组</p>
     </header>
 
-    <label class="search field">
-      <span class="field-label">搜索笔记</span>
-      <input
-        v-model="searchText"
-        class="input"
-        type="search"
-        placeholder="标题或正文"
-        :maxlength="MAX_SEARCH_LENGTH"
-      />
-    </label>
-
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="loading && !items.length" class="hint">加载中…</p>
 
     <div v-else class="notes-grid">
-      <nav class="notes-list" aria-label="笔记列表">
-        <p v-if="truncated" class="truncated">仅显示最近 {{ NOTES_PAGE_SIZE }} 篇</p>
-        <p v-if="selectedHidden" class="hidden-note type-small">当前笔记不在筛选结果内</p>
-        <p v-if="!groups.length" class="hint empty">
-          {{ searchText ? '没有匹配的笔记' : '还没有笔记' }}
-        </p>
-        <section v-for="group in groups" :key="group.slug" class="note-group">
-          <h2 class="group-title type-small">{{ group.name }}</h2>
-          <ul class="note-items">
-            <li v-for="note in group.notes" :key="note.id">
-              <button
-                type="button"
-                class="note-link"
-                :class="{ 'note-link--active': note.slug === selectedSlug }"
-                :aria-current="note.slug === selectedSlug ? 'true' : undefined"
-                @click="router.replace({ query: { ...route.query, note: note.slug } })"
-              >
-                <span class="note-title">{{ note.title }}</span>
-                <span class="note-date type-mono tabular-nums">{{ formatDate(note.published_at ?? note.updated_at) }}</span>
-              </button>
-            </li>
-          </ul>
-        </section>
-      </nav>
+      <NoteTree
+        :items="items"
+        :selected-slug="selectedSlug"
+        :search="searchText"
+        :total="total"
+        :page-size="NOTES_PAGE_SIZE"
+        @update:search="onTreeSearch"
+        @select="onTreeSelect"
+      />
 
       <article ref="bodyRef" class="note-body card" tabindex="-1" aria-labelledby="note-body-title">
         <p class="sr-only" aria-live="polite">{{ liveText }}</p>

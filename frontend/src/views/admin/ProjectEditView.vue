@@ -25,7 +25,7 @@ import {
 } from '@/types'
 import {
   METRIC_KEY_LABEL_MAX,
-  METRIC_MAX,
+  METRIC_LIMITS,
   METRIC_VALUE_MAX,
   META_KEY_LABEL_MAX,
   META_VALUE_MAX,
@@ -76,7 +76,7 @@ const METADATA_KIND_OPTIONS: Array<{ value: MetadataKind; label: string }> = [
 
 /** 已占用的指标格数量（指标卡 ≤2 条，到上限就该在界面上挡，而不是等后端 400）。 */
 const metricCount = computed(() => kvRows.value.filter((row) => row.kind === 'metric').length)
-const metricFull = computed(() => metricCount.value >= METRIC_MAX)
+const metricFull = computed(() => metricCount.value >= METRIC_LIMITS.max)
 
 /** 该行是否已达指标卡的长度上限（切换成 metric 后键值都要更短）。 */
 function kvKeyMax(row: MetadataItemInput): number {
@@ -522,7 +522,7 @@ onMounted(() => void load())
         <template v-else>
           <p class="hint">
             最多 50 条，键名不可重复；保存时整体替换。「指标卡」条目会渲染成前台详情的数字格，
-            最多 {{ METRIC_MAX }} 条（当前 {{ metricCount }}）。
+            最多 {{ METRIC_LIMITS.max }} 条（当前 {{ metricCount }}）。
           </p>
           <ul class="kv-list">
             <li v-for="(row, index) in kvRows" :key="index" class="kv-row">
@@ -546,10 +546,10 @@ onMounted(() => void load())
               class="btn"
               type="button"
               :disabled="metricFull"
-              :title="metricFull ? `指标卡最多 ${METRIC_MAX} 条` : undefined"
+              :title="metricFull ? `指标卡最多 ${METRIC_LIMITS.max} 条` : undefined"
               @click="addMetricRow"
             >
-              {{ metricFull ? `指标卡已满（${METRIC_MAX} 条）` : '添加指标卡' }}
+              {{ metricFull ? `指标卡已满（${METRIC_LIMITS.max} 条）` : '添加指标卡' }}
             </button>
             <button class="btn btn-primary" type="button" :disabled="kvSaving" @click="saveMetadata">
               {{ kvSaving ? '保存中…' : '保存自定义字段' }}

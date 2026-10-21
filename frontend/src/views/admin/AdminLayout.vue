@@ -19,10 +19,35 @@ function onLogout() {
         <span class="brand-sub">后台管理</span>
       </div>
 
+      <!-- 03 稿：图标 + 文字；当前项浅蓝底 + 主色字（不造空壳页，只列已交付的三项） -->
       <nav class="nav" aria-label="后台导航">
-        <RouterLink class="nav-link" :to="{ name: 'admin-projects' }">项目列表</RouterLink>
-        <RouterLink class="nav-link" :to="{ name: 'admin-project-new' }">新建项目</RouterLink>
-        <RouterLink class="nav-link" :to="{ name: 'admin-note-new' }">新建笔记</RouterLink>
+        <RouterLink class="nav-link" :to="{ name: 'admin-projects' }">
+          <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <rect x="2" y="2.5" width="12" height="3" rx="1" fill="none" stroke="currentColor" stroke-width="1.4" />
+            <rect x="2" y="7.5" width="12" height="3" rx="1" fill="none" stroke="currentColor" stroke-width="1.4" />
+            <rect x="2" y="12.5" width="12" height="1.4" rx="0.7" fill="currentColor" />
+          </svg>
+          项目列表
+        </RouterLink>
+        <RouterLink class="nav-link" :to="{ name: 'admin-project-new' }">
+          <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+          新建项目
+        </RouterLink>
+        <RouterLink class="nav-link" :to="{ name: 'admin-note-new' }">
+          <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path
+              d="M3 2.5h6.5L13 6v7.5H3z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.3"
+              stroke-linejoin="round"
+            />
+            <path d="M5.2 8.2h5.6M5.2 10.6h3.6" fill="none" stroke="currentColor" stroke-width="1.2" />
+          </svg>
+          新建笔记
+        </RouterLink>
       </nav>
 
       <div class="sidebar-footer">
@@ -39,7 +64,7 @@ function onLogout() {
 <style scoped>
 .layout {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 223px 1fr;
   min-height: 100vh;
 }
 .sidebar {
@@ -71,11 +96,20 @@ function onLogout() {
   gap: 4px;
 }
 .nav-link {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-height: var(--touch-min);
   padding: 10px 12px;
   font-weight: 600;
   color: var(--c-text);
   border-radius: var(--r-control);
+}
+.nav-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: currentColor;
 }
 .nav-link:hover {
   background: var(--c-fill);

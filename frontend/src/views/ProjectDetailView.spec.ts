@@ -57,10 +57,14 @@ describe('ProjectDetailView', () => {
     expect(within(aside).getByRole('heading', { name: '相关链接' })).toBeInTheDocument()
     expect(within(aside).getByRole('heading', { name: '技术栈' })).toBeInTheDocument()
 
-    // F5：状态/进展合成一行（标签「状态」，值 已发布 · 进行中），固定列共 5 行
-    expect(within(aside).getByText('状态')).toBeInTheDocument()
-    expect(within(aside).queryByText('发布状态')).not.toBeInTheDocument()
-    expect(within(aside).queryByText('进展')).not.toBeInTheDocument()
+    // 02 稿 + D6：「发布状态」与「进展」两行两徽标，上下堆叠不并排；固定列共 6 行
+    expect(within(aside).getByText('发布状态')).toBeInTheDocument()
+    expect(within(aside).getByText('进展')).toBeInTheDocument()
+    // 6 行固定 + 种子里 2 条追加
+    expect(aside.querySelectorAll('.kv-row')).toHaveLength(8)
+    expect(aside.querySelector('.count')?.textContent).toContain('6 固定')
+    // 两行两徽标：不再有合并行「状态」
+    expect(within(aside).queryByText('状态')).not.toBeInTheDocument()
     expect(within(aside).getByText('已发布')).toBeInTheDocument()
     expect(within(aside).getByText('进行中')).toBeInTheDocument()
     expect(within(aside).getByText('前端负责人')).toBeInTheDocument()
@@ -218,9 +222,10 @@ describe('ProjectDetailView', () => {
 
     expect(await screen.findByRole('heading', { level: 1, name: '极简项目' })).toBeInTheDocument()
     const aside = screen.getByRole('complementary', { name: '项目速览' })
-    // 状态行恒有，所以元数据 panel 一定在；其余两 panel 与空固定列不渲染
+    // 发布状态 + 进展两行恒有，所以元数据 panel 一定在；其余两 panel 与空固定列不渲染
     expect(within(aside).getByRole('heading', { name: '元数据' })).toBeInTheDocument()
-    expect(within(aside).getByText('状态')).toBeInTheDocument()
+    expect(within(aside).getByText('发布状态')).toBeInTheDocument()
+    expect(aside.querySelectorAll('.kv-row')).toHaveLength(2)
     expect(within(aside).queryByText('我的角色')).not.toBeInTheDocument()
     expect(within(aside).queryByRole('heading', { name: '相关链接' })).not.toBeInTheDocument()
     expect(within(aside).queryByRole('heading', { name: '技术栈' })).not.toBeInTheDocument()

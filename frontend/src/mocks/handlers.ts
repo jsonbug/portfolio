@@ -60,7 +60,7 @@ import {
   META_KEY_LABEL_MAX,
   METADATA_MAX,
   METRIC_KEY_LABEL_MAX,
-  METRIC_MAX,
+  METRIC_LIMITS,
   METRIC_VALUE_MAX,
   META_VALUE_MAX,
   SCREENSHOT_CAPTION_MAX,
@@ -297,11 +297,11 @@ function validateMetadataInput(input: unknown): ErrorDetail[] {
       })
     }
   })
-  if (metrics > METRIC_MAX) {
+  if (metrics > METRIC_LIMITS.max) {
     details.push({
       field: 'items',
       code: 'too_big',
-      message: `指标卡条目最多 ${METRIC_MAX} 条（当前 ${metrics}）`,
+      message: `指标卡条目最多 ${METRIC_LIMITS.max} 条（当前 ${metrics}）`,
     })
   }
   return details
