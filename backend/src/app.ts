@@ -15,7 +15,23 @@ import { adminLinkRoutes } from "./routes/admin/links.js";
 import { adminNoteRoutes } from "./routes/admin/notes.js";
 import { verifyToken } from "./lib/auth.js";
 import { env } from "./env.js";
-import { AppError, errorStatusMap, toErrorEnvelope } from "./lib/errors.js";
+import {
+  AppError,
+  errorStatusMap,
+  toErrorEnvelope,
+  type ErrorCode,
+} from "./lib/errors.js";
+
+// 4xx 兜底映射：框架层错误（非法 JSON body、payload 过大、限流等）不带契约 code，
+// 按状态码落到 §1.3 值域里最接近的一个；表里没有的 4xx 也归 VALIDATION_ERROR（仍是 4xx 语义）。
+const CLIENT_ERROR_CODES: Partial<Record<number, ErrorCode>> = {
+  400: "VALIDATION_ERROR",
+  401: "UNAUTHORIZED",
+  403: "FORBIDDEN",
+  404: "NOT_FOUND",
+  405: "METHOD_NOT_ALLOWED",
+  409: "CONFLICT",
+};
 
 // 后台 /admin/* 鉴权钩子（2.1 登录认证）
 async function requireAuth(req: FastifyRequest): Promise<void> {
@@ -50,16 +66,20 @@ export function buildApp(): FastifyInstance {
             .send({ error: { code: "CONFLICT", message: "唯一约束冲突", requestId: req.id } });
         }
       }
-      req.log.error(err);
+      // 非 AppError 的兜底：先按 statusCode 分类（4xx 映射到契约 error.code 值域，见 §1.3），
+      // 再兜到 INTERNAL_ERROR + 500。顺序不能反：把 400 的框架错误（如非法 JSON body）
+      // 统一报成 INTERNAL_ERROR 会让客户端把一个自己能修的错误当成服务端故障。
       const status = err.statusCode ?? 500;
-      const code =
-        status === 404
-          ? "NOT_FOUND"
-          : status === 405
-            ? "METHOD_NOT_ALLOWED"
-            : "INTERNAL_ERROR";
+      const mapped = status >= 400 && status < 500 ? CLIENT_ERROR_CODES[status] : undefined;
+      if (!mapped) {
+        // 5xx 与非 4xx 一律 INTERNAL_ERROR + 500：code 是分类维度，不允许与非 500 状态错配。
+        req.log.error(err);
+        return reply.status(500).send({
+          error: { code: "INTERNAL_ERROR", message: "服务器内部错误", requestId: req.id },
+        });
+      }
       return reply.status(status).send({
-        error: { code, message: err.message, requestId: req.id },
+        error: { code: mapped, message: err.message, requestId: req.id },
       });
     },
   );

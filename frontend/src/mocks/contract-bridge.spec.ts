@@ -83,9 +83,11 @@ describe('契约表的 mock runner', () => {
       writeFileSync(out, JSON.stringify(rows), 'utf8')
     }
 
-    // mock 是契约的本地实现：除了显式标注「等后端合」的行，其余都必须满足契约
-    const mustFailures = rows.filter((row) => row.kind === 'must' && !row.satisfied)
-    expect(mustFailures.map((row) => row.name)).toEqual([])
+    // mock 是契约的本地实现：**所有行都必须满足契约**，包括 kind==='todo' 的标注行。
+    // 只查 kind==='must' 会留一个经典洞：两侧同时违约（real 与 mock 都不满足）时，
+    // diff 判定「一致」，门禁全绿——「都错」和「都对」给出同一结果。
+    const unsatisfied = rows.filter((row) => !row.satisfied)
+    expect(unsatisfied.map((row) => `${row.kind}:${row.name}`)).toEqual([])
     expect(rows.length).toBeGreaterThan(50)
   }, 120_000)
 })

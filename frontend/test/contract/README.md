@@ -45,10 +45,21 @@ npm run contract -- --source both       # 双向：同一张表两遍 + 逐行 d
 
 ## 注意
 
-- **库身份自证**：脚本先打印 `BASE` 与 `/health` 结果，再建一个哨兵项目（写入 → 按 id 读回 → 软删），三者都通过才继续。这一步是为了防「默认端口撞上另一个工作区的后端，全套断言却全绿」——那种绿是假的。
+- **库身份自证（P0，先于一切写操作）**：脚本先打印 `BASE` 与 `/health` 结果，再建一个哨兵项目（写入 → 按 id 读回 → 软删）。
+  **四步里任何一步不成立，立即 `process.exit(3)`，不会进入下面的清场步骤**——清场会对库里所有项目发 `DELETE`，
+  撞上别人的库就是把别人的数据软删掉，而红行还藏在输出最后一行。退出码约定：`1` 断言失败、`2` mock 侧取数失败、`3` 库身份未验明即中止。
 - 校验过库身份后，脚本会**软删目标库里的所有既有项目**（保证计数断言确定），只对本地 `dev.db` 这种测试库用。
-- **带 TODO 标注的红行 = 后端还没合，不是前端没改对**。`pendingBackend(name, 当前行为, 契约行为, 'backend:…')` 会断言「当前真实行为」并打 `✗ … TODO(backend:xxx)`，既不静默放行，也不把行从表里删掉；后端合入后该行自动变 `✓ …（后端已修，删掉本行 TODO 标注即可）`，前端同批把标注改成 `check()`。
-- 当前带标注的：`search` 的 `%`/`_` 未转义（`fix/v1.2-review`）、`NoteSummary.excerpt` 未上线（契约 v1.2.3）。
+- **带 TODO 标注的红行 = 后端还没合，不是前端没改对**。`pendingBackend(name, 当前行为, 契约行为, 'TODO(<branch>)')` 会断言「当前真实行为」并打 `✗ … TODO(<branch>)`，既不静默放行，也不把行从表里删掉；后端合入后该行自动变 `✓ …（后端已修，删掉本行 TODO 标注即可）`，前端同批把标注改成 `check()`。
+- **TODO 的 branch 必须是可校验的 git 分支名**（`backend:excerpt` 这类标签不接受）。校验命令（不进脚本——无网/无 git 的环境不该被卡死，由放行时人工跑一次）：
+
+  ```bash
+  grep -o 'TODO([^)]*)' frontend/test/contract/run.mjs | sed 's/TODO(//;s/)//' | sort -u \
+    | xargs -r -n1 git ls-remote --exit-code --heads origin
+  ```
+
+- **已知分叉有硬上限**：`run.mjs` 里 `MAX_KNOWN_DIVERGENCES`（当前 `0`）被写死并断言，`--source both` 超出即把多出来的行算作「真不一致」。上限只会往下调，不放宽。
+- 当前带标注的：**无**（`search` 的 `%`/`_` 与 `NoteSummary.excerpt` 都已合入，6 行归零）。
 - 表外抽样（不在 15 行对照表内，防「只对快照不对行为」）：`search` 超 200 字 → 400、`search=%` / `search=_` 字面量匹配、`stars` 同分回 `recent`、笔记 >100 篇（pageSize 上限 100 + 真实 `total`）。
 - 公开项目详情**没有** `publish_status`，这是契约决定（可见性过滤后只剩 `published`，放开等于让前台表达它不该知道的状态）；所以详情页元数据里「发布状态」固定渲染「已发布」，归档项目的真实状态只属于后台。
 - mock 侧同口径另有 `frontend/src/mocks/handlers.spec.ts` 单测；「两边同构」由 `--source both` 每次现场比对，不靠这句话担保。
+- `src/mocks/contract-bridge.spec.ts` 断言 **所有行（含 `kind==='todo'`）在 mock 侧必须 satisfied**：只查 `must` 会留「两侧同时违约即静默通过」的洞。
