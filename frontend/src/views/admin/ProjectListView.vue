@@ -33,13 +33,14 @@ const counts = ref({ all: 0, draft: 0, published: 0, archived: 0 })
 const loading = ref(false)
 const error = ref('')
 const search = ref('')
-/** 分段：全部 / 已发布 / 草稿 / 已归档（无「已删除」，软删项目在「全部」里带徽标）。 */
+/** 分段：全部 / 草稿 / 已发布 / 已归档（无「已删除」，软删项目在「全部」里带徽标）。
+ *  顺序按研发负责人本轮派单口径（全部/草稿/已发布/已归档），与效果图若有出入以效果图为准。 */
 const segment = ref<PublishStatus | ''>('')
 
 const SEGMENTS = computed<Array<{ value: PublishStatus | ''; label: string; count: number }>>(() => [
   { value: '', label: '全部', count: counts.value.all },
-  { value: 'published', label: PUBLISH_STATUS_LABELS.published, count: counts.value.published },
   { value: 'draft', label: PUBLISH_STATUS_LABELS.draft, count: counts.value.draft },
+  { value: 'published', label: PUBLISH_STATUS_LABELS.published, count: counts.value.published },
   { value: 'archived', label: PUBLISH_STATUS_LABELS.archived, count: counts.value.archived },
 ])
 
