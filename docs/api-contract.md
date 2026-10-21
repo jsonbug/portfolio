@@ -87,7 +87,7 @@
 - 定义：`body_md` **去 Markdown 后取前 120 字，超长加省略号，空正文为 `null`**。
 - `NoteSummary` **必带此字段**：`GET /notes` 的 `items[]`、`GET /projects/:slug` 的 `notes[]`、后台笔记列表、后台项目详情的 `notes[]` 一律带。
 - 可验证：取值只允许 `null` 或长度 ≤ 121 的字符串（120 字 + 单字符省略号 `…`），且不含 Markdown 记号（`#` / `**` / 反引号 / 链接语法）。
-- `GET /notes/:slug`（3.4）已返回 `body_md`，`excerpt` 在该响应中**可选**：客户端不得依赖其存在或不存在，契约测试也不得对该端点断言 `excerpt` 的有无。
+- `GET /notes/:slug`（3.4）返回 `NoteSummary` + `body_md`，**同样必带 `excerpt`**（正文已给全文，但字段不允许缺省）。
 
 ## 2. 枚举（冻结）
 
@@ -236,7 +236,7 @@ draft ──publish──▶ published ──archive──▶ archived
 
 ### 3.4 `GET /notes/:slug` — 笔记详情
 
-`NoteSummary` + `body_md`；旧 slug 301；草稿或所属项目不可见 → 404。`excerpt` 在本响应中可选（见 1.4 第 3 条），客户端不得依赖其有无。
+`NoteSummary` + `body_md`；旧 slug 301；草稿或所属项目不可见 → 404。`excerpt` 随 `NoteSummary` **必带**（见 1.4 第 3 条），不因正文已含全文而省。
 
 ### 3.5 `GET /technologies` — 技术栈标签
 
