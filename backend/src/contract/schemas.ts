@@ -1,23 +1,31 @@
 // 冻结的 API 契约（可执行形态）：请求/响应结构 + 字段校验规则。
 // 与 docs/api-contract.md 保持同步；任何改动都视为契约变更，需在 issue 中说明。
+//
+// v1.2（ALICE-7 阶段 1）：字段命名统一为《开发计划 v1.2》第五节的 snake_case，
+// 状态拆 publish_status（曝光）+ progress（进展）两字段，项目/笔记以 slug 定位。
 import { z } from "zod";
 
 // ---------- 枚举（冻结值） ----------
-// status 状态机（冻结）：draft→published、published→archived、archived→published；
-// 其余（跨级 draft↔archived、published→draft）返回 400 INVALID_STATUS_TRANSITION；相同状态 no-op。
-export const ProjectStatusSchema = z.enum(["draft", "published", "archived"]);
-export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
+// 曝光维度状态机（v1.2）：draft→published、published→archived / published→draft（撤回）、
+// archived→published；其余（跨级 draft↔archived）返回 400 INVALID_STATUS_TRANSITION；相同状态 no-op。
+export const PublishStatusSchema = z.enum(["draft", "published", "archived"]);
+export type PublishStatus = z.infer<typeof PublishStatusSchema>;
 
-export const LinkTypeSchema = z.enum(["repo", "website", "demo", "other"]);
+// 内容维度进展（与曝光维度正交，不参与可见性判断）
+export const ProgressSchema = z.enum(["ongoing", "launched"]);
+export type Progress = z.infer<typeof ProgressSchema>;
+
+export const LinkTypeSchema = z.enum(["repo", "site", "docs", "demo", "other"]);
 export type LinkType = z.infer<typeof LinkTypeSchema>;
 
-export const ProjectLifecycleSchema = z.enum([
-  "active",
-  "completed",
-  "maintained",
-  "paused",
-]);
-export type ProjectLifecycle = z.infer<typeof ProjectLifecycleSchema>;
+export const LinkStatusSchema = z.enum(["ok", "timeout", "error"]);
+export type LinkStatus = z.infer<typeof LinkStatusSchema>;
+
+export const NotePublishStatusSchema = z.enum(["draft", "published"]);
+export type NotePublishStatus = z.infer<typeof NotePublishStatusSchema>;
+
+export const EntityTypeSchema = z.enum(["project", "note"]);
+export type EntityType = z.infer<typeof EntityTypeSchema>;
 
 // ---------- 通用 ----------
 export const isoDatetime = () =>
@@ -25,28 +33,19 @@ export const isoDatetime = () =>
     .string()
     .refine((v) => !Number.isNaN(Date.parse(v)), { message: "必须是 ISO-8601 时间" });
 
-export const TechnologyNameSchema = z.string().trim().min(1).max(50);
+// slug：全站唯一、^[a-z0-9-]{2,64}$（B15）
+export const SlugSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9-]{2,64}$/, "slug 只能包含小写字母、数字与连字符，长度 2–64");
 
 export const PageQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
 
-export const PaginationMetaSchema = z.object({
-  page: z.number().int(),
-  pageSize: z.number().int(),
-  total: z.number().int(),
-  totalPages: z.number().int(),
-});
-
-export const listEnvelopeSchema = <T extends z.ZodTypeAny>(item: T) =>
-  z.object({
-    items: z.array(item),
-    page: z.number().int(),
-    pageSize: z.number().int(),
-    total: z.number().int(),
-    totalPages: z.number().int(),
-  });
+// 技术栈名（项目内多值）
+export const TechNameSchema = z.string().trim().min(1).max(50);
 
 // ---------- 链接 ----------
 // 链接 url：仅 http/https（架构师评审第 10 条：z.string().url() 会接受 ftp/mailto 等，改 refine 收紧）
@@ -64,17 +63,18 @@ const httpUrl = (message: string) =>
     }, message);
 
 const httpUrlSchema = httpUrl("链接必须是 http/https 地址");
-
-// 项目封面图 url：http/https ≤2048（可选，null=渐层兜底）
-export const coverImageSchema = httpUrl("封面图片必须是 http/https 地址");
+const coverUrlSchema = httpUrl("封面图片必须是 http/https 地址");
 
 export const LinkSchema = z.object({
   id: z.string(),
   type: LinkTypeSchema,
   label: z.string().nullable(),
   url: z.string(),
-  sortOrder: z.number().int(),
-  createdAt: isoDatetime(),
+  sort: z.number().int(),
+  last_status: LinkStatusSchema.nullable(),
+  last_http_status: z.number().int().nullable(),
+  last_checked_at: isoDatetime().nullable(),
+  created_at: isoDatetime(),
 });
 export type Link = z.infer<typeof LinkSchema>;
 
@@ -82,7 +82,7 @@ export const LinkCreateSchema = z.object({
   type: LinkTypeSchema.default("other"),
   label: z.string().trim().max(100).nullable().optional(),
   url: httpUrlSchema,
-  sortOrder: z.number().int().min(0).optional(),
+  sort: z.number().int().min(0).optional(),
 });
 export type LinkCreate = z.infer<typeof LinkCreateSchema>;
 
@@ -90,86 +90,149 @@ export const LinkUpdateSchema = z.object({
   type: LinkTypeSchema.optional(),
   label: z.string().trim().max(100).nullable().optional(),
   url: httpUrlSchema.optional(),
-  sortOrder: z.number().int().min(0).optional(),
+  sort: z.number().int().min(0).optional(),
 });
 export type LinkUpdate = z.infer<typeof LinkUpdateSchema>;
 
-// ---------- 笔记（1:1 项目） ----------
-export const NoteSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  content: z.string(),
-  createdAt: isoDatetime(),
-  updatedAt: isoDatetime(),
+// ---------- 元数据 KV ----------
+export const MetadataItemSchema = z.object({
+  key_label: z.string().trim().min(1).max(50),
+  value: z.string().trim().min(1).max(500),
+  sort: z.number().int().min(0).optional(),
 });
-export type Note = z.infer<typeof NoteSchema>;
+export type MetadataItem = z.infer<typeof MetadataItemSchema>;
 
-export const NoteUpsertSchema = z.object({
-  title: z.string().trim().min(1).max(200),
-  content: z.string().min(1).max(100_000),
+// 同一项目内键名不可重复（B6）→ 应用层先给 400，而不是撞库得 409
+export const MetadataReplaceSchema = z
+  .array(MetadataItemSchema)
+  .max(50)
+  .refine(
+    (items) => new Set(items.map((i) => i.key_label)).size === items.length,
+    { message: "同一项目内元数据键名不可重复" },
+  );
+export type MetadataReplace = z.infer<typeof MetadataReplaceSchema>;
+
+export const MetadataResponseSchema = z.object({
+  key_label: z.string(),
+  value: z.string(),
+  sort: z.number().int(),
 });
-export type NoteUpsert = z.infer<typeof NoteUpsertSchema>;
+
+// ---------- 笔记（N:1 项目） ----------
+export const NoteSummarySchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  title: z.string(),
+  project: z.object({ slug: z.string(), name: z.string() }),
+  tags: z.array(z.string()),
+  published_at: isoDatetime().nullable(),
+  created_at: isoDatetime(),
+  updated_at: isoDatetime(),
+});
+export type NoteSummary = z.infer<typeof NoteSummarySchema>;
+
+export const NoteDetailSchema = NoteSummarySchema.extend({
+  body_md: z.string(),
+});
+export type NoteDetail = z.infer<typeof NoteDetailSchema>;
+
+export const NoteCreateSchema = z.object({
+  project_id: z.string().min(1),
+  slug: SlugSchema,
+  title: z.string().trim().min(1).max(200),
+  body_md: z.string().min(1).max(100_000),
+  publish_status: NotePublishStatusSchema.optional(),
+  tags: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+});
+export type NoteCreate = z.infer<typeof NoteCreateSchema>;
+
+// PATCH 语义：未传字段忽略；tags 传数组即整体替换（含 [] 清空）；publish_status 变更时维护 published_at
+export const NoteUpdateSchema = NoteCreateSchema.omit({ project_id: true }).partial();
+export type NoteUpdate = z.infer<typeof NoteUpdateSchema>;
+
+export const AdminNoteListItemSchema = NoteSummarySchema.extend({
+  publish_status: NotePublishStatusSchema,
+  project_id: z.string(),
+});
+export type AdminNoteListItem = z.infer<typeof AdminNoteListItemSchema>;
+
+// 后台详情额外带正文（编辑器回填）
+export const AdminNoteDetailSchema = AdminNoteListItemSchema.extend({
+  body_md: z.string(),
+});
+export type AdminNoteDetail = z.infer<typeof AdminNoteDetailSchema>;
 
 // ---------- 项目 ----------
 export const ProjectListItemSchema = z.object({
   id: z.string(),
+  slug: z.string(),
   name: z.string(),
-  tagline: z.string().nullable(),
-  coverImage: z.string().nullable(),
-  status: ProjectStatusSchema,
+  summary: z.string().nullable(),
+  cover_image_url: z.string().nullable(),
+  progress: ProgressSchema,
   stars: z.number().int().nullable(),
-  lastActivityAt: isoDatetime().nullable(),
-  technologies: z.array(z.string()),
-  createdAt: isoDatetime(),
-  updatedAt: isoDatetime(),
+  version: z.string().nullable(),
+  last_updated_at: isoDatetime().nullable(),
+  tech_stack: z.array(z.string()),
+  links: z.array(LinkSchema),
+  created_at: isoDatetime(),
+  updated_at: isoDatetime(),
 });
 export type ProjectListItem = z.infer<typeof ProjectListItemSchema>;
 
 export const ProjectDetailSchema = ProjectListItemSchema.extend({
-  description: z.string().nullable(),
+  description_md: z.string().nullable(),
   role: z.string().nullable(),
-  projectStatus: ProjectLifecycleSchema.nullable(),
-  startDate: isoDatetime().nullable(),
-  endDate: isoDatetime().nullable(),
-  githubRepo: z.string().nullable(),
-  links: z.array(LinkSchema),
-  note: NoteSchema.nullable(),
+  license: z.string().nullable(),
+  start_year: z.number().int().nullable(),
+  team_size: z.number().int().nullable(),
+  metadata: z.array(MetadataResponseSchema),
+  notes: z.array(NoteSummarySchema),
 });
 export type ProjectDetail = z.infer<typeof ProjectDetailSchema>;
 
 export const ProjectCreateSchema = z.object({
+  slug: SlugSchema,
   name: z.string().trim().min(1).max(100),
-  tagline: z.string().trim().max(200).nullable().optional(),
-  description: z.string().max(100_000).nullable().optional(),
-  coverImage: coverImageSchema.nullable().optional(),
-  status: ProjectStatusSchema.optional(),
+  summary: z.string().trim().max(60).nullable().optional(),
+  description_md: z.string().max(100_000).nullable().optional(),
+  cover_image_url: coverUrlSchema.nullable().optional(),
+  cover_source_url: coverUrlSchema.nullable().optional(),
+  publish_status: PublishStatusSchema.optional(),
+  progress: ProgressSchema.optional(),
   stars: z.number().int().min(0).nullable().optional(),
-  lastActivityAt: isoDatetime().nullable().optional(),
+  version: z.string().trim().max(50).nullable().optional(),
+  last_updated_at: isoDatetime().nullable().optional(),
   role: z.string().trim().max(100).nullable().optional(),
-  projectStatus: ProjectLifecycleSchema.nullable().optional(),
-  startDate: isoDatetime().nullable().optional(),
-  endDate: isoDatetime().nullable().optional(),
-  githubRepo: z.string().trim().max(200).nullable().optional(),
-  technologies: z.array(TechnologyNameSchema).max(50).optional(),
+  license: z.string().trim().max(100).nullable().optional(),
+  start_year: z.number().int().min(1000).max(9999).nullable().optional(),
+  team_size: z.number().int().min(1).max(100_000).nullable().optional(),
+  tech_stack: z.array(TechNameSchema).max(50).optional(),
 });
 export type ProjectCreate = z.infer<typeof ProjectCreateSchema>;
 
-// PATCH 语义（契约冻结）：未传字段忽略；显式 null 清空 nullable 字段；technologies 传数组即整体替换（含 [] 清空）。
+// PATCH 语义（契约冻结）：未传字段忽略；显式 null 清空 nullable 字段；
+// tech_stack 传数组即整体替换（含 [] 清空），顺序即 sort；metadata 见 PUT /admin/projects/:id/metadata。
 export const ProjectUpdateSchema = ProjectCreateSchema.partial();
 export type ProjectUpdate = z.infer<typeof ProjectUpdateSchema>;
 
-// ---------- 后台管理响应（含软删除状态） ----------
+// ---------- 后台管理响应（含曝光状态与软删除） ----------
 export const AdminProjectListItemSchema = ProjectListItemSchema.extend({
-  deletedAt: isoDatetime().nullable(),
+  publish_status: PublishStatusSchema,
+  published_at: isoDatetime().nullable(),
+  deleted_at: isoDatetime().nullable(),
 });
 export type AdminProjectListItem = z.infer<typeof AdminProjectListItemSchema>;
 
 export const AdminProjectDetailSchema = ProjectDetailSchema.extend({
-  deletedAt: isoDatetime().nullable(),
+  publish_status: PublishStatusSchema,
+  published_at: isoDatetime().nullable(),
+  cover_source_url: z.string().nullable(),
+  deleted_at: isoDatetime().nullable(),
 });
 export type AdminProjectDetail = z.infer<typeof AdminProjectDetailSchema>;
 
-// ---------- 后台列表查询 ----------
+// ---------- 列表查询 ----------
 // Fastify query 为字符串；布尔参数兼容 true/false/1/0/空（空=默认）
 export const boolQuery = (defaultValue: boolean) =>
   z.preprocess((v) => {
@@ -178,19 +241,44 @@ export const boolQuery = (defaultValue: boolean) =>
     return v === "true" || v === "1";
   }, z.boolean());
 
+// 重复参数（`?technology=Vue&technology=Node`）或逗号分隔（`?technology=Vue,Node`）都接受
+const multiQuery = (item: z.ZodType<string>) =>
+  z.preprocess((v) => {
+    if (v === undefined || v === "") return undefined;
+    const arr = Array.isArray(v) ? v : String(v).split(",");
+    const cleaned = arr.map((s) => String(s).trim()).filter(Boolean);
+    return cleaned.length ? cleaned : undefined;
+  }, z.array(item).max(20).optional());
+
 export const AdminProjectListQuerySchema = PageQuerySchema.extend({
-  status: ProjectStatusSchema.optional(),
+  publish_status: PublishStatusSchema.optional(),
+  progress: ProgressSchema.optional(),
   search: z.string().trim().max(200).optional(),
   includeDeleted: boolQuery(false),
 });
 export type AdminProjectListQuery = z.infer<typeof AdminProjectListQuerySchema>;
 
-// 前台公开列表查询（阶段 3 实现路由；契约先行冻结参数名与校验）
+// 前台公开列表查询（F1/F6）：progress 分段只有 ongoing / launched（归档前台不可见，无归档分段）
 export const PublicProjectListQuerySchema = PageQuerySchema.extend({
   search: z.string().trim().max(200).optional(),
-  technology: TechnologyNameSchema.optional(),
+  technology: multiQuery(TechNameSchema),
+  progress: ProgressSchema.optional(),
+  sort: z.enum(["recent", "stars"]).default("recent"),
 });
 export type PublicProjectListQuery = z.infer<typeof PublicProjectListQuerySchema>;
+
+export const AdminNoteListQuerySchema = PageQuerySchema.extend({
+  publish_status: NotePublishStatusSchema.optional(),
+  project_id: z.string().optional(),
+  search: z.string().trim().max(200).optional(),
+});
+export type AdminNoteListQuery = z.infer<typeof AdminNoteListQuerySchema>;
+
+export const PublicNoteListQuerySchema = PageQuerySchema.extend({
+  search: z.string().trim().max(200).optional(),
+  tag: z.string().trim().max(50).optional(),
+});
+export type PublicNoteListQuery = z.infer<typeof PublicNoteListQuerySchema>;
 
 // ---------- 技术栈标签列表 ----------
 export const TechnologyListSchema = z.object({

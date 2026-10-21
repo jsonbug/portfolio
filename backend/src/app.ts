@@ -9,6 +9,7 @@ import { healthRoutes } from "./routes/health.js";
 import { authRoutes } from "./routes/auth.js";
 import { technologyRoutes } from "./routes/technologies.js";
 import { projectRoutes } from "./routes/projects.js";
+import { noteRoutes } from "./routes/notes.js";
 import { adminProjectRoutes } from "./routes/admin/projects.js";
 import { adminLinkRoutes } from "./routes/admin/links.js";
 import { adminNoteRoutes } from "./routes/admin/notes.js";
@@ -75,6 +76,7 @@ export function buildApp(): FastifyInstance {
   app.register(authRoutes, { prefix: "/api/v1" });
   app.register(technologyRoutes, { prefix: "/api/v1" });
   app.register(projectRoutes, { prefix: "/api/v1" });
+  app.register(noteRoutes, { prefix: "/api/v1" });
 
   // 后台路由（统一鉴权）
   app.register(

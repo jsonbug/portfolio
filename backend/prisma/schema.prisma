@@ -1,11 +1,18 @@
-// 项目展示平台 · 数据模型
+// 项目展示平台 · 数据模型（v1.2 · 《开发计划 v1.2》第五节）
 // SQLite (MVP) —— 预留平滑迁移 PostgreSQL/Supabase
 //
 // 迁移友好设计：
 //  1. 主键统一用 cuid() 字符串，不依赖 SQLite 自增整型，切到 Postgres 无需改 ID 类型；
 //  2. 不使用 Prisma 原生 enum（SQLite 不支持，会退化为 TEXT），枚举值用 String + 应用层校验（src/contract/schemas.ts）；
-//  3. 表名/字段名用 @@map 固定为 snake_case，避免 Postgres 标识符折叠差异；
+//  3. 表名/字段名固定 snake_case（与第五节一致，也规避 Postgres 标识符折叠差异）；
 //  4. 时间统一 DateTime，SQLite 存 ISO/数值、Postgres 存 timestamp，Prisma 层语义一致。
+//
+// v1.2 相对 v1.0 的结构变化（不可回退的口径）：
+//  - 状态拆两个正交字段：`publish_status`（曝光维度 draft|published|archived）+ `progress`（内容维度 ongoing|launched）；
+//  - `slug` 全站唯一 + `slug_aliases`（唯一键 `unique(entity_type, slug)`）承载改名后的旧地址；
+//  - 元数据 = 固定列 `role / license / start_year / team_size` + `project_metadata` 自由 KV；
+//  - 技术栈从「共享词表 technology + 关联表」改为项目内多值表 `project_tech_stack`（含 sort）；
+//  - 笔记从 1:1 改为 N:1（一笔记一项目），新增 `slug` / `publish_status` / 标签表 `note_tags`。
 
 generator client {
   provider = "prisma-client-js"
@@ -18,83 +25,135 @@ datasource db {
 
 // 项目（核心实体）
 model Project {
-  id                 String    @id @default(cuid())
-  name               String // 项目名称（必填，1..100）
-  tagline            String? // 一句话简介（列表卡片摘要）
-  description        String? // 详细描述（Markdown）
-  coverImage         String? // 封面图 URL（http/https ≤2048，可选；null=渐层兜底）
-  status             String    @default("draft") // 发布状态：draft | published | archived
-  stars              Int? // star 数（后台手填，P0）
-  lastActivityAt     DateTime? // 项目更新时间（后台手填，P0，语义=项目外部最后活跃时间）
-  role               String? // 元数据·角色
-  projectStatus      String? // 元数据·项目状态：active | completed | maintained | paused
-  startDate          DateTime? // 元数据·时间范围起
-  endDate            DateTime? // 元数据·时间范围止
-  githubRepo         String? // 预留·GitHub 仓库全名 owner/repo（P1 自动拉取）
-  githubStars        Int? // 预留·P1 自动拉取的 star
-  githubLastActivityAt DateTime? // 预留·P1 自动拉取的更新时间
-  githubSyncedAt     DateTime? // 预留·P1 上次同步时间
-  deletedAt          DateTime? // 软删除标记（非空=已删除，前台与后台列表均不可见）
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  id               String    @id @default(cuid())
+  slug             String    @unique // 全站唯一，^[a-z0-9-]{2,64}$（B15）
+  name             String // 项目名称（必填，1..100）
+  summary          String? // 一句话简介（≤60 字，列表卡片摘要）
+  description_md   String? // 详细描述（Markdown）
+  cover_image_url  String? // 封面主图 1600×900（B3）
+  cover_source_url String? // 封面原图，便于重裁（B3）
+  publish_status   String    @default("draft") // 曝光维度：draft | published | archived
+  progress         String    @default("ongoing") // 内容维度：ongoing | launched
+  stars            Int? // star 数（后台手填，P0）
+  version          String? // 版本号（后台手填，P0）
+  last_updated_at  DateTime? // 项目最近更新时间（手填展示字段，与系统 updated_at 区分）
+  role             String? // 元数据·我的角色
+  license          String? // 元数据·开源协议
+  start_year       Int? // 元数据·起始年份
+  team_size        Int? // 元数据·团队规模（可空）
+  published_at     DateTime? // 首次/最近一次进入 published 的时间
+  deleted_at       DateTime? // 软删除标记（非空=已删除，前台不可见，后台列表默认也不可见）
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
 
-  note         Note?
-  links        Link[]
-  technologies ProjectTechnology[]
+  tech_stack ProjectTechStack[]
+  links      ProjectLink[]
+  metadata   ProjectMetadata[]
+  notes      Note[]
 
-  @@index([status, deletedAt])
+  @@index([publish_status, deleted_at])
   @@index([name])
-  @@map("project")
+  @@map("projects")
 }
 
-// 技术栈标签（多值元数据，前台筛选 F6 依赖）
-model Technology {
-  id       String              @id @default(cuid())
-  name     String              @unique // 技术栈名，如 "Vue" / "Node.js"（1..50，唯一）
-  projects ProjectTechnology[]
+// 技术栈（项目内多值标签，带展示顺序，供 F6 筛选）
+model ProjectTechStack {
+  id         String @id @default(cuid())
+  project_id String
+  name       String
+  sort       Int    @default(0)
 
-  @@map("technology")
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@unique([project_id, name])
+  @@index([name])
+  @@map("project_tech_stack")
 }
 
-// 项目 ↔ 技术栈 关联表（显式建模，级联规则明确）
-model ProjectTechnology {
-  projectId    String
-  technologyId String
-  project      Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  technology   Technology @relation(fields: [technologyId], references: [id], onDelete: Cascade)
+// 链接（1:N 项目）+ 可用性检查结果（B16）
+model ProjectLink {
+  id               String    @id @default(cuid())
+  project_id       String
+  type             String    @default("other") // repo | site | docs | demo | other
+  url              String // 应用层校验 http/https
+  label            String?
+  sort             Int       @default(0)
+  last_status      String? // ok | timeout | error（null=未检查）
+  last_http_status Int?
+  last_checked_at  DateTime?
+  created_at       DateTime  @default(now())
 
-  @@id([projectId, technologyId])
-  @@index([technologyId])
-  @@map("project_technology")
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@index([project_id])
+  @@map("project_links")
 }
 
-// 链接（1:N 项目）
-model Link {
-  id        String   @id @default(cuid())
-  projectId String
-  type      String   @default("other") // repo | website | demo | other
-  label     String? // 显示名，如 "GitHub" / "官网"
-  url       String // 链接地址（应用层校验 http/https）
-  sortOrder Int      @default(0) // 展示排序，越小越靠前
-  createdAt DateTime @default(now())
+// 自定义元数据 KV（固定列承载高频项，其余自由键值；同项目内 key 唯一）
+model ProjectMetadata {
+  id         String @id @default(cuid())
+  project_id String
+  key_label  String
+  value      String
+  sort       Int    @default(0)
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
 
-  @@index([projectId])
-  @@map("link")
+  @@unique([project_id, key_label])
+  @@map("project_metadata")
 }
 
-// 笔记（1:1 项目，纯 Markdown）
-// 冻结决策为「一项目一笔记」；若后续要改 1:N，仅需去掉 projectId 的 @unique，无需数据迁移。
+// 笔记（N:1 项目，纯 Markdown，独立栏目 F4）
 model Note {
-  id        String   @id @default(cuid())
-  projectId String   @unique
-  title     String // 标题（1..200）
-  content   String // 正文，纯 Markdown（1..100000 字符）
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String    @id @default(cuid())
+  project_id     String
+  slug           String    @unique // 全站唯一（与项目各自命名空间，见 slug_aliases）
+  title          String
+  body_md        String // 正文，纯 Markdown
+  publish_status String    @default("draft") // draft | published
+  published_at   DateTime?
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project Project   @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  tags    NoteTag[]
 
-  @@map("note")
+  @@index([project_id])
+  @@index([publish_status])
+  @@map("notes")
+}
+
+// 笔记标签（多值）
+model NoteTag {
+  id      String @id @default(cuid())
+  note_id String
+  name    String
+
+  note Note @relation(fields: [note_id], references: [id], onDelete: Cascade)
+
+  @@unique([note_id, name])
+  @@map("note_tags")
+}
+
+// slug 旧地址（改名后 301）；唯一键为 (entity_type, slug)：项目与笔记分属两个命名空间
+model SlugAlias {
+  id          String   @id @default(cuid())
+  entity_type String // project | note
+  entity_id   String
+  slug        String
+  created_at  DateTime @default(now())
+
+  @@unique([entity_type, slug])
+  @@index([entity_type, entity_id])
+  @@map("slug_aliases")
+}
+
+// 后台账号（单站长起步；鉴权在阶段 2.1 切到本表）
+model AdminUser {
+  id            String   @id @default(cuid())
+  username      String   @unique
+  password_hash String
+  created_at    DateTime @default(now())
+
+  @@map("admin_users")
 }
