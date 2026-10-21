@@ -100,7 +100,9 @@ onMounted(() => void load())
             <h2 id="notes-title">相关笔记</h2>
             <ul class="note-list">
               <li v-for="note in detail.notes" :key="note.id" class="note-item">
-                <span class="note-title">{{ note.title }}</span>
+                <RouterLink :to="{ name: 'note-detail', params: { slug: note.slug } }" class="note-title">
+                  {{ note.title }}
+                </RouterLink>
                 <span v-if="note.published_at" class="note-date tabular-nums">{{
                   formatDate(note.published_at)
                 }}</span>
@@ -326,6 +328,13 @@ onMounted(() => void load())
   gap: var(--space-16);
   font-size: var(--fs-body);
   line-height: var(--lh-body);
+}
+.note-title {
+  color: var(--c-text);
+  text-decoration: none;
+}
+.note-title:hover {
+  color: var(--c-primary-strong);
 }
 .note-date {
   color: var(--c-text-secondary);

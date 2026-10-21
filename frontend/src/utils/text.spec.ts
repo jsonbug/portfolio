@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDate, daysAgo, truncate } from './text'
+import { daysAgo, formatDate, readingTimeMinutes, truncate } from './text'
 
 describe('truncate', () => {
   it('原样返回不超过最大长度的文本', () => {
@@ -45,5 +45,18 @@ describe('daysAgo', () => {
   it('null 与非法值返回 null', () => {
     expect(daysAgo(null, now)).toBeNull()
     expect(daysAgo('oops', now)).toBeNull()
+  })
+})
+
+describe('readingTimeMinutes', () => {
+  it('中文按字、英文按词，向上取整到分钟', () => {
+    expect(readingTimeMinutes('')).toBe(0)
+    expect(readingTimeMinutes('短文')).toBe(1)
+    expect(readingTimeMinutes('字'.repeat(900))).toBe(3)
+    expect(readingTimeMinutes('word '.repeat(300))).toBe(1)
+  })
+
+  it('中英混排都计入', () => {
+    expect(readingTimeMinutes(`${'字'.repeat(150)} ${'word '.repeat(150)}`)).toBe(1)
   })
 })
