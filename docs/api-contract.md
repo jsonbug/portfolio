@@ -392,6 +392,34 @@ draft ──publish──▶ published ──archive──▶ archived
 
 **可观察后果（别当 bug 报）**：3.1 的 `sort=recent` 用 `last_updated_at ?? updated_at`（`backend/src/routes/projects.ts`），所以**没手填 `last_updated_at`** 的项目会因为一次空 PUT（如传 `[]` 清空）而在 recent 里提前；填了 `last_updated_at` 的项目不受影响。这是「保存即更新」的可接受语义。
 
+### 4.2 笔记
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/admin/notes` | 列表；`project_id` / `publish_status` / `search`（title、body_md、slug 子串）过滤；按 `updated_at` 倒序；**不含 `body_md`** |
+| POST | `/admin/notes` | 新建，`project_id` 必填（项目不存在 → 404）；201 |
+| GET | `/admin/notes/:id` | 详情，含 `body_md` |
+| PATCH | `/admin/notes/:id` | 局部更新；`tags` 整体替换；`publish_status` 变更维护 `published_at`；slug 改名规则同项目 |
+| DELETE | `/admin/notes/:id` | 硬删除，204 |
+
+`NoteCreate` / `NoteUpdate`：`slug`（`^[a-z0-9-]{2,64}$`，note 命名空间唯一）、`title`（≤200）、
+`body_md`（1..100k）、`publish_status`、`tags`（≤20 个，每个 ≤50）。
+
+> slug 口径（收敛 B8 与第五节的措辞差异）：笔记 slug 在**笔记集合内**唯一，项目 slug 在**项目集合内**唯一，
+> 两者可同名——`slug_aliases` 的唯一键是 `(entity_type, slug)`，`/projects/:slug` 与 `/notes/:slug` 是两个命名空间。
+> B8 的「全站唯一」按此理解（不与项目 slug 互斥），否则两侧改名会互锁。
+
+### 4.3 认证
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/auth/login` | **公开接口（不需要 Bearer）**：`{ username, password }` → `{ token, expiresAt }`；失败 401 `UNAUTHORIZED`，不区分账号不存在与密码错误 |
+
+> `Authorization: Bearer <token>` 只作用于 `/api/v1/admin/**`；`/auth/login`、`/health`、前台读接口均无需鉴权。
+
+> 阶段 1 说明：登录仍读环境变量（`ADMIN_USERNAME` / `ADMIN_PASSWORD_HASH`）；`admin_users` 表已随迁移建好，
+> 改为库内账号（D1 密码登录）在阶段 2.1 落地。
+
 ### 4.4 链接健康检查（B16，v1.2.2 新增）
 
 `Link` 上的三个只读字段由服务端维护，**写接口不接受**（传了忽略，不报错）：
@@ -421,34 +449,6 @@ IPv4 映射（`::ffff:`）、NAT64、6to4 里嵌入的 IPv4 同样按上述规�
 连接把 DNS 固定到已校验的 IP（校验与连接同一地址，防 DNS rebinding），重定向后的第二次解析同样重校验。
 
 > 后台链接列的失效态与前台 F9 灰显都只认 `last_status === "failed"`；`unknown` 不灰显（没数据不等于坏了）。
-
-### 4.2 笔记
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/admin/notes` | 列表；`project_id` / `publish_status` / `search`（title、body_md、slug 子串）过滤；按 `updated_at` 倒序；**不含 `body_md`** |
-| POST | `/admin/notes` | 新建，`project_id` 必填（项目不存在 → 404）；201 |
-| GET | `/admin/notes/:id` | 详情，含 `body_md` |
-| PATCH | `/admin/notes/:id` | 局部更新；`tags` 整体替换；`publish_status` 变更维护 `published_at`；slug 改名规则同项目 |
-| DELETE | `/admin/notes/:id` | 硬删除，204 |
-
-`NoteCreate` / `NoteUpdate`：`slug`（`^[a-z0-9-]{2,64}$`，note 命名空间唯一）、`title`（≤200）、
-`body_md`（1..100k）、`publish_status`、`tags`（≤20 个，每个 ≤50）。
-
-> slug 口径（收敛 B8 与第五节的措辞差异）：笔记 slug 在**笔记集合内**唯一，项目 slug 在**项目集合内**唯一，
-> 两者可同名——`slug_aliases` 的唯一键是 `(entity_type, slug)`，`/projects/:slug` 与 `/notes/:slug` 是两个命名空间。
-> B8 的「全站唯一」按此理解（不与项目 slug 互斥），否则两侧改名会互锁。
-
-### 4.3 认证
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/auth/login` | **公开接口（不需要 Bearer）**：`{ username, password }` → `{ token, expiresAt }`；失败 401 `UNAUTHORIZED`，不区分账号不存在与密码错误 |
-
-> `Authorization: Bearer <token>` 只作用于 `/api/v1/admin/**`；`/auth/login`、`/health`、前台读接口均无需鉴权。
-
-> 阶段 1 说明：登录仍读环境变量（`ADMIN_USERNAME` / `ADMIN_PASSWORD_HASH`）；`admin_users` 表已随迁移建好，
-> 改为库内账号（D1 密码登录）在阶段 2.1 落地。
 
 ## 5. 冻结核对与预留（ALICE-8，2026-10-21）
 
@@ -486,4 +486,4 @@ IPv4 映射（`::ffff:`）、NAT64、6to4 里嵌入的 IPv4 同样按上述规�
 | v1.2.4 | 信封层 `error.code` 值域归位：1.3 明确为唯一出处且 8 个值全冻结（FORBIDDEN 为保留位、METHOD_NOT_ALLOWED 当时记为「由框架 405 产生」——该判断由 v1.2.7 更正为保留值），1.2 增加值域段并规定「只允许对 `error.code` 分支、`code` 与状态冲突时以 `code` 为准」；同时校正 1.4 第 2 条的 `code` 来源措辞——不限于 zod issue code，`conflict` / `invalid_transition` 等手写标识同样存在且同样不得依赖 |
 | v1.2.5 | compose 部署冒烟实测发现：建项目 body **不含** `links`/`metadata`（多余键被忽略而非报错），补 4.1「链接与元数据是独立资源」与 `POST /admin/projects/:id/links` / `PATCH|DELETE /admin/links/:id` 行；元数据 body 明确为裸数组、键名字段 `key_label`。**纯条文补正，无实现变更** |
 | v1.2.6 | 项目截图与元数据 `kind` 落条文（见 3.2、4.1.1）：`screenshots[]` 形状与 `PUT /admin/projects/:id/screenshots` 整体替换（≤10 张、`http(s)`、`caption` ≤80 且空白归一 `null`）、`metadata[].kind` 三路径必带、metric ≤2 / ≤16 / ≤12 与 meta 50 / 500、替换 bump `updated_at`、URL 只存原图且截图不进列表。三条实现期假设固定为契约措辞：`sort` 可重复（客户端不得假设唯一，同值保持数组序）、`caption` 空白归一 `null`（wire 上不出现空串，客户端不必处理 `""`）、metric 按条数判且超限整批 400 不静默截断。**纯条文补正，无实现变更** |
-| v1.2.7 | ① 1.3 把 `METHOD_NOT_ALLOWED` 标为**保留值、当前实现不产生**，删掉「由框架 405 产生」，并冻结行为「未知方法 → 404 `NOT_FOUND`」（不开启框架 405，避免暴露「路径存在但方法不对」这一维度）；② 1.4 第 2 条改为「结构必带、值不承诺稳定」：`field`/`code`/`message` 三键任何一侧都不得省略（含 mock），客户端**可展示不可分支**，可验证项为两侧 `Object.keys(details[0]).sort()` 相同；③ 4.1.1 补「传 `[]` 清空也算一次内容变更」的可观察后果（未填 `last_updated_at` 的项目会在 recent 提前）。**纯条文补正，无实现变更** |
+| v1.2.7 | ① 1.3 把 `METHOD_NOT_ALLOWED` 标为**保留值、当前实现不产生**，删掉「由框架 405 产生」，并冻结行为「未知方法 → 404 `NOT_FOUND`」（不开启框架 405，避免暴露「路径存在但方法不对」这一维度）；② 1.4 第 2 条改为「结构必带、值不承诺稳定」：`field`/`code`/`message` 三键任何一侧都不得省略（含 mock），客户端**可展示不可分支**，可验证项为两侧 `Object.keys(details[0]).sort()` 相同；③ 4.1.1 补「传 `[]` 清空也算一次内容变更」的可观察后果（未填 `last_updated_at` 的项目会在 recent 提前）；④ 4.4 节位搬到 4.3 之后（纯搬移，无内容改动，行多重集与搬前一致）。**纯条文补正，无实现变更** |
