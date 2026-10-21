@@ -76,3 +76,17 @@ export function formatShortDate(iso: string | null, now: number = Date.now()): s
   const day = String(date.getUTCDate()).padStart(2, '0')
   return `${month}-${day}`
 }
+
+/**
+ * 前台卡片的相对时间（走查 #4：卡片底栏写「3 天前」，不是 `2026-10-18`）。
+ *
+ * 30 天以内用相对说法，更久回到 `MM-DD` —— 「87 天前」读者还得自己换算，反而更难理解。
+ */
+export function formatRelativeDay(iso: string | null, now: number = Date.now()): string {
+  const days = daysAgo(iso, now)
+  if (days == null) return ''
+  if (days === 0) return '今天'
+  if (days === 1) return '昨天'
+  if (days < 30) return `${days} 天前`
+  return formatShortDate(iso, now)
+}

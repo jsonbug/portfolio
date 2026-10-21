@@ -60,7 +60,7 @@ describe('NoteDetailView', () => {
 
     await renderNote('toc-demo')
 
-    const toc = await screen.findByRole('region', { name: '目录' })
+    const toc = await screen.findByRole('region', { name: '本页目录' })
     const links = within(toc).getAllByRole('link')
     expect(links.map((a) => a.textContent)).toEqual(['背景', '细节'])
     // 锚点指向正文里真实存在的标题
@@ -131,6 +131,43 @@ describe('NoteDetailView · 门槛与 a11y', () => {
     const hint = await screen.findByText(/这篇笔记较早，未在最近 100 篇内/)
     expect(hint).toBeInTheDocument()
     expect(within(hint).getByRole('link', { name: '回笔记列表' })).toHaveAttribute('href', '/notes')
+  })
+
+  it('目录当前项跟着滚动走：滚过第二条标题后它成为 aria-current', async () => {
+    admin('POST', '/admin/notes', {
+      project_id: 'proj_portfolio',
+      slug: 'toc-scroll',
+      title: '带两节的笔记',
+      body_md: '## 第一节\n\n内容。\n\n## 第二节\n\n更多内容。\n',
+      publish_status: 'published',
+    })
+    await renderNote('toc-scroll')
+
+    const toc = await screen.findByRole('region', { name: '本页目录' })
+    await waitFor(() => expect(within(toc).getAllByRole('link')).toHaveLength(2))
+    const links = within(toc).getAllByRole('link')
+
+    // jsdom 不会真的滚动：直接改每个标题的 top，模拟「第二条已滚过顶部」
+    const headings = Array.from(
+      document.querySelectorAll<HTMLElement>('.markdown h2, .markdown h3'),
+    )
+    headings.forEach((heading, i) => {
+      heading.getBoundingClientRect = () => ({ top: i === 0 ? -200 : 40 }) as DOMRect
+    })
+    window.dispatchEvent(new Event('scroll'))
+
+    await waitFor(() => expect(links[links.length - 1]).toHaveAttribute('aria-current', 'location'))
+    expect(links[0]).not.toHaveAttribute('aria-current')
+  })
+
+  it('所属项目卡补上项目摘要与进展徽标（✓ 已上线）', async () => {
+    await renderNote('chart-kit-0-9')
+
+    const panel = await screen.findByRole('region', { name: '所属项目' })
+    const card = within(panel).getByRole('link')
+    // 摘要来自再取一次项目详情；chart-kit 是已上线，所以徽标是 check 形态
+    await waitFor(() => expect(card).toHaveTextContent('声明式图表库'))
+    expect(within(card).getByText('已上线')).toBeInTheDocument()
   })
 
   it('正文标题可聚焦、目录锚点目标带 tabindex，切换后有 aria-live 播报区', async () => {

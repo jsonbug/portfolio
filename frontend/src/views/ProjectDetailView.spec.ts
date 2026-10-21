@@ -57,9 +57,12 @@ describe('ProjectDetailView', () => {
     expect(within(aside).getByRole('heading', { name: '相关链接' })).toBeInTheDocument()
     expect(within(aside).getByRole('heading', { name: '技术栈' })).toBeInTheDocument()
 
-    // 固定列：发布状态 + 进展 + 4 列（效果图的 6 行）
-    expect(within(aside).getByText('发布状态')).toBeInTheDocument()
-    expect(within(aside).getByText('进展')).toBeInTheDocument()
+    // F5：状态/进展合成一行（标签「状态」，值 已发布 · 进行中），固定列共 5 行
+    expect(within(aside).getByText('状态')).toBeInTheDocument()
+    expect(within(aside).queryByText('发布状态')).not.toBeInTheDocument()
+    expect(within(aside).queryByText('进展')).not.toBeInTheDocument()
+    expect(within(aside).getByText('已发布')).toBeInTheDocument()
+    expect(within(aside).getByText('进行中')).toBeInTheDocument()
     expect(within(aside).getByText('前端负责人')).toBeInTheDocument()
     expect(within(aside).getByText('MIT')).toBeInTheDocument()
     expect(within(aside).getByText('2024')).toBeInTheDocument()
@@ -75,11 +78,13 @@ describe('ProjectDetailView', () => {
     renderDetail('portfolio-platform')
     await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
 
-    expect(screen.getByRole('link', { name: '源码仓库 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
+    // hero 主操作与右栏清单现在同名（F3 把 repo 文案统一成「源码仓库」），按容器区分
+    const hero = screen.getByRole('banner')
+    expect(within(hero).getByRole('link', { name: '源码仓库 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
       'href',
       'https://github.com/jsonbug/portfolio',
     )
-    expect(screen.getByRole('link', { name: '访问官网 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
+    expect(within(hero).getByRole('link', { name: '访问官网 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
       'href',
       'https://portfolio.example.com',
     )
@@ -133,7 +138,7 @@ describe('ProjectDetailView', () => {
 
     renderDetail('unknown-link-project')
     const aside = await screen.findByRole('complementary', { name: '项目速览' })
-    const repo = within(aside).getByRole('link', { name: '仓库 · 未知状态项目（新窗口打开）' })
+    const repo = within(aside).getByRole('link', { name: '源码仓库 · 未知状态项目（新窗口打开）' })
     expect(repo).not.toHaveClass('link-anchor--failed')
     expect(repo).not.toHaveTextContent('⚠')
     expect(repo).not.toHaveAttribute('title')
@@ -171,7 +176,8 @@ describe('ProjectDetailView', () => {
   it('相关链接：类型文案 + 裸域名 + 新窗口 rel', async () => {
     renderDetail('portfolio-platform')
 
-    const link = await screen.findByRole('link', { name: '仓库 · 项目展示平台（新窗口打开）' })
+    const aside = await screen.findByRole('complementary', { name: '项目速览' })
+    const link = within(aside).getByRole('link', { name: '源码仓库 · 项目展示平台（新窗口打开）' })
     expect(link).toHaveAttribute('href', 'https://github.com/jsonbug/portfolio')
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
@@ -212,11 +218,10 @@ describe('ProjectDetailView', () => {
 
     expect(await screen.findByRole('heading', { level: 1, name: '极简项目' })).toBeInTheDocument()
     const aside = screen.getByRole('complementary', { name: '项目速览' })
-    // 发布状态 / 进展 恒有，所以元数据 panel 一定在；其余两 panel 与空固定列不渲染
+    // 状态行恒有，所以元数据 panel 一定在；其余两 panel 与空固定列不渲染
     expect(within(aside).getByRole('heading', { name: '元数据' })).toBeInTheDocument()
-    expect(within(aside).getByText('发布状态')).toBeInTheDocument()
-    expect(within(aside).getByText('进展')).toBeInTheDocument()
-    expect(within(aside).queryByText('角色')).not.toBeInTheDocument()
+    expect(within(aside).getByText('状态')).toBeInTheDocument()
+    expect(within(aside).queryByText('我的角色')).not.toBeInTheDocument()
     expect(within(aside).queryByRole('heading', { name: '相关链接' })).not.toBeInTheDocument()
     expect(within(aside).queryByRole('heading', { name: '技术栈' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '相关笔记' })).not.toBeInTheDocument()
@@ -237,7 +242,7 @@ describe('ProjectDetailView', () => {
     expect(within(notes).getByText('2 篇')).toBeInTheDocument()
 
     const aside = screen.getByRole('complementary', { name: '项目速览' })
-    expect(within(aside).getByText(/^\d+ 固定 · 2 追加$/)).toBeInTheDocument()
+    expect(within(aside).getByText(/^\d+ 固定 · 2 追加$/)).toBeInTheDocument() // 5 固定（F5 合并后）
     expect(within(aside).getByText('2')).toBeInTheDocument() // 相关链接 2 条
     expect(within(aside).getByText('4')).toBeInTheDocument() // 技术栈 4 个
   })

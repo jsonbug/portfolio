@@ -105,6 +105,11 @@ const metaSaved = ref(false)
 const kvSaving = ref(false)
 const linkSaving = ref(false)
 const notice = ref('')
+/** B2：两个大分区默认折叠，页面上先看到「截图 / 链接 / 笔记」，元数据按需展开。 */
+const openMeta = ref(false)
+const openKv = ref(false)
+/** 超过建议字数时计数变色（只是提示，不拦提交）。 */
+const summaryNearLimit = computed(() => meta.summary.length > 60)
 
 const SLUG_PATTERN = /^[a-z0-9-]{2,64}$/
 
@@ -384,10 +389,22 @@ onMounted(() => void load())
     <p v-if="loading" class="hint">加载中…</p>
 
     <div v-else class="sections">
-      <!-- 元数据 -->
+      <!-- 元数据：默认折叠（B2），标题右侧是开关 -->
       <section class="card section" aria-labelledby="meta-title">
-        <h2 id="meta-title">元数据</h2>
-        <div class="grid">
+        <div class="section-head">
+          <h2 id="meta-title">元数据</h2>
+          <button
+            class="btn btn-ghost btn-sm"
+            type="button"
+            :aria-expanded="openMeta"
+            aria-controls="meta-body"
+            @click="openMeta = !openMeta"
+          >
+            {{ openMeta ? '收起' : '展开' }}
+          </button>
+        </div>
+        <div v-show="openMeta" id="meta-body" class="meta-body">
+          <div class="grid">
           <div class="field">
             <label class="field-label" for="name">名称 *</label>
             <input id="name" v-model="meta.name" class="input" type="text" placeholder="项目名称（≤100 字）" />
@@ -404,7 +421,21 @@ onMounted(() => void load())
           </div>
           <div class="field span-2">
             <label class="field-label" for="summary">一句话简介</label>
-            <input id="summary" v-model="meta.summary" class="input" type="text" maxlength="60" placeholder="卡片副标题（≤60 字）" />
+            <input
+              id="summary"
+              v-model="meta.summary"
+              class="input"
+              type="text"
+              maxlength="60"
+              placeholder="卡片副标题"
+              aria-describedby="summary-hint"
+            />
+            <p id="summary-hint" class="field-hint">
+              <span>建议 40–60 字，列表只显示 2 行，超出截断</span>
+              <span class="type-mono counter" :class="{ 'counter--over': summaryNearLimit }"
+                >{{ meta.summary.length }}/60</span
+              >
+            </p>
           </div>
           <div class="field span-2">
             <label class="field-label" for="description_md">描述（Markdown）</label>
@@ -468,12 +499,25 @@ onMounted(() => void load())
           <button class="btn btn-primary" type="button" :disabled="metaSaving" @click="saveMeta">
             {{ metaSaving ? '保存中…' : isNew ? '创建项目' : '保存元数据' }}
           </button>
+          </div>
         </div>
       </section>
 
-      <!-- 自定义元数据（KV） -->
+      <!-- 自定义元数据（KV）：默认折叠（B2） -->
       <section class="card section" aria-labelledby="kv-title">
-        <h2 id="kv-title">自定义元数据</h2>
+        <div class="section-head">
+          <h2 id="kv-title">自定义元数据</h2>
+          <button
+            class="btn btn-ghost btn-sm"
+            type="button"
+            :aria-expanded="openKv"
+            aria-controls="kv-body"
+            @click="openKv = !openKv"
+          >
+            {{ openKv ? '收起' : '展开' }}
+          </button>
+        </div>
+        <div id="kv-body" v-show="openKv">
         <p v-if="isNew" class="hint">先创建项目，再添加自定义字段。</p>
         <template v-else>
           <p class="hint">
@@ -512,6 +556,7 @@ onMounted(() => void load())
             </button>
           </div>
         </template>
+        </div>
       </section>
 
       <!-- 截图（整体替换，顺序即 sort） -->
@@ -668,6 +713,29 @@ onMounted(() => void load())
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
+}
+.meta-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.field-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin: 0;
+  color: var(--c-text-secondary);
+  font-size: 13px;
+}
+.counter--over {
+  color: var(--c-danger);
 }
 .section h2 {
   margin: 0;

@@ -2,7 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getPublicProject } from '@/api/projects'
-import ProjectCover from '@/components/ProjectCover.vue'
+import AppBadge from '@/components/AppBadge.vue'
+import LinkTypeIcon from '@/components/LinkTypeIcon.vue'
 import ProgressBadge from '@/components/ProgressBadge.vue'
 import {
   LINK_TYPE_LABELS,
@@ -73,21 +74,27 @@ const heroActions = computed(() => {
 })
 
 /**
- * 元数据 panel 的固定行（空值整行不渲染）。
+ * 元数据 panel 的固定行（空值整行不渲染，走查 #13 的顺序）。
  *
- * 「发布状态」与「进展」在公开 payload 里只有 progress：公开接口按可见性过滤，
- * 能出现在这里的项目一律是已发布，故发布状态固定渲染「已发布」（见评论中的假设记录）。
+ * F5：「发布状态」与「进展」合成一行「状态」，值是 `已发布 · 进行中` 这种形式——
+ * 两行说的是同一件事，分开写既占高度又容易读出「已发布但没上线」的歧义。
+ *
+ * 公开 payload 里只有 `progress`：能出现在这里的项目一律已发布，
+ * 故发布状态固定为「已发布」（见交付评论里的假设记录）。
  */
 const fixedMeta = computed(() => {
   const item = detail.value
   if (!item) return []
   return [
-    { label: '发布状态', value: '已发布' },
-    { label: '进展', value: PROGRESS_LABELS[item.progress] },
-    { label: '角色', value: item.role ?? '' },
-    { label: '开源协议', value: item.license ?? '' },
-    { label: '起始年份', value: item.start_year != null ? String(item.start_year) : '' },
-    { label: '团队规模', value: item.team_size != null ? `${item.team_size} 人` : '' },
+    { label: '状态', value: `已发布 · ${PROGRESS_LABELS[item.progress]}`, status: true },
+    {
+      label: '起始年份',
+      value: item.start_year != null ? String(item.start_year) : '',
+      status: false,
+    },
+    { label: '我的角色', value: item.role ?? '', status: false },
+    { label: '团队规模', value: item.team_size != null ? `${item.team_size} 人` : '', status: false },
+    { label: '开源协议', value: item.license ?? '', status: false },
   ].filter((row) => row.value !== '')
 })
 
@@ -96,6 +103,10 @@ const fixedMeta = computed(() => {
  * `kind === 'metric'` 的条目属于左栏「指标」统计格（契约 4.1.1），两边不能重复渲染。
  */
 const metaRows = computed(() => (detail.value?.metadata ?? []).filter((row) => row.kind !== 'metric'))
+
+/** 「状态」行里的进展徽标：与 ProgressBadge 同一套形状/色调（形状+文字双编码）。 */
+const progressTone = computed(() => (detail.value?.progress === 'launched' ? 'success' : 'warning'))
+const progressShape = computed(() => (detail.value?.progress === 'launched' ? 'check' : 'half'))
 
 /** 指标统计格：最多 4 格，0 条时整块不渲染（稿上 4 格是上限，不是要求凑满）。 */
 const metricCells = computed(() =>
@@ -157,9 +168,11 @@ onMounted(() => void load())
 <template>
   <main class="page detail">
     <nav class="back" aria-label="面包屑">
+      <span class="crumb">
       <RouterLink :to="{ name: 'home' }">项目</RouterLink>
       <span class="crumb-sep" aria-hidden="true">/</span>
       <span v-if="detail" class="crumb-current" aria-current="page">{{ detail.name }}</span>
+      </span>
       <span v-if="detail" class="updated type-small">
         更新于 {{ formatDate(detail.last_updated_at ?? detail.updated_at) }}
       </span>
@@ -170,7 +183,6 @@ onMounted(() => void load())
 
     <template v-else-if="detail">
       <header class="hero">
-        <ProjectCover :name="detail.name" :cover-image="detail.cover_image_url" variant="hero" />
         <div class="hero-body">
           <div class="title-row">
             <h1 class="name type-h1">{{ detail.name }}</h1>
@@ -213,7 +225,7 @@ onMounted(() => void load())
             class="card section"
             aria-labelledby="desc-title"
           >
-            <h2 id="desc-title">项目介绍</h2>
+            <h2 id="desc-title">项目简介</h2>
             <div v-if="descriptionHtml" class="markdown" v-html="descriptionHtml" />
 
             <figure
@@ -302,7 +314,14 @@ onMounted(() => void load())
             <dl class="kv">
               <div v-for="row in fixedMeta" :key="row.label" class="kv-row">
                 <dt>{{ row.label }}</dt>
-                <dd>{{ row.value }}</dd>
+                <dd v-if="row.status" class="kv-badges">
+                  <AppBadge tone="published" shape="dot">已发布</AppBadge>
+                  <span class="kv-badge-sep" aria-hidden="true">·</span>
+                  <AppBadge :tone="progressTone" :shape="progressShape">
+                    {{ PROGRESS_LABELS[detail.progress] }}
+                  </AppBadge>
+                </dd>
+                <dd v-else>{{ row.value }}</dd>
               </div>
               <div v-for="row in metaRows" :key="`kv-${row.key_label}`" class="kv-row">
                 <dt>{{ row.key_label }}</dt>
@@ -319,8 +338,8 @@ onMounted(() => void load())
             <ul class="links">
               <li v-for="link in detail.links" :key="link.id" class="link">
                 <span v-if="!safeHttpUrl(link.url)" class="link-anchor link-anchor--plain">
-                  <span class="link-type">{{ LINK_TYPE_LABELS[link.type] }}</span>
-                  <span class="link-label">{{ link.label || link.url }}</span>
+                  <span class="link-type" aria-hidden="true"><LinkTypeIcon :type="link.type" /></span>
+                  <span class="link-label">{{ link.label || LINK_TYPE_LABELS[link.type] }}</span>
                   <span class="link-host type-small">链接地址不合法，已停用</span>
                 </span>
                 <a
@@ -333,15 +352,18 @@ onMounted(() => void load())
                   :title="link.last_status === 'failed' ? failedHint(link) : undefined"
                   :aria-label="linkAriaLabel(link)"
                 >
-                  <span class="link-type">{{ LINK_TYPE_LABELS[link.type] }}</span>
+                  <span class="link-type" aria-hidden="true">
+                    <LinkTypeIcon :type="link.type" />
+                  </span>
                   <span class="link-label">
                     <span v-if="link.last_status === 'failed'" class="link-warn" aria-hidden="true">⚠</span>
-                    {{ link.label || bareDomain(link.url) }}
+                    {{ link.label || LINK_TYPE_LABELS[link.type] }}
                   </span>
                   <span class="link-host type-small">
                     {{ bareDomain(link.url) }}
                     <span v-if="link.last_status === 'failed'" class="link-failed">{{ failedHint(link) }}</span>
                   </span>
+                  <span class="link-chevron" aria-hidden="true">›</span>
                 </a>
               </li>
             </ul>
@@ -393,6 +415,15 @@ onMounted(() => void load())
 }
 
 .back {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+.crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
   font-size: var(--fs-small);
 }
 .error {
@@ -471,8 +502,10 @@ onMounted(() => void load())
 }
 .section h2 {
   margin: 0;
-  font-size: var(--fs-h3);
-  line-height: var(--lh-h3);
+  /* 走查 #12：区块标题 22/32 600，不再用 17/26 */
+  font-size: var(--fs-h2);
+  line-height: var(--lh-h2);
+  font-weight: var(--fw-semibold);
   color: var(--c-ink);
 }
 .panel {
@@ -486,9 +519,15 @@ onMounted(() => void load())
   flex-direction: column;
   gap: var(--space-8);
 }
+.link-chevron {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: var(--c-text-secondary);
+}
 .link-anchor {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 2px var(--space-8);
   padding: var(--space-8);
   min-height: var(--touch-min);
@@ -504,8 +543,9 @@ onMounted(() => void load())
   outline-offset: 2px;
 }
 .link-type {
-  font-size: var(--fs-mono);
-  line-height: var(--lh-mono);
+  grid-row: 1 / span 2;
+  align-self: center;
+  display: inline-flex;
   color: var(--c-text-secondary);
 }
 .link-label {
@@ -629,14 +669,28 @@ onMounted(() => void load())
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-8);
 }
 .kv-row {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-16);
+  min-height: 44px;
   font-size: var(--fs-small);
   line-height: var(--lh-small);
+  /* 行间 1px 虚线（走查 #13） */
+  border-bottom: 1px dashed var(--c-border);
+}
+.kv-row:last-child {
+  border-bottom: 0;
+}
+.kv-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.kv-badge-sep {
+  color: var(--c-text-secondary);
 }
 .kv-row dt {
   color: var(--c-text-secondary);
@@ -656,11 +710,16 @@ onMounted(() => void load())
   flex-wrap: wrap;
 }
 .tag {
-  padding: 2px 10px;
-  font-size: var(--fs-mono);
-  line-height: var(--lh-mono);
-  color: var(--c-primary-strong);
-  background: var(--c-primary-soft);
+  /* 走查 #14：灰底灰字，与卡片标签同款（原来是主色浅底 + 主色字，蓝成一片） */
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1;
+  color: var(--c-text);
+  background: var(--c-fill);
   border-radius: var(--r-tag);
 }
 .note-list {

@@ -583,12 +583,34 @@ check('截图 url 过不了「带 host 的绝对地址」→ 400（不是静默�
   [shotsBadUrl.status, shotsBadUrl.json?.error?.code],
 )
 
+/**
+ * 契约 §4.1：两个「整体替换」端点（metadata / screenshots）的请求体都是**裸数组**。
+ *
+ * 这一对反例行是补盲区用的：契约表长期只覆盖「返回体形状」，于是前端发 `{ items: [...] }`
+ * 时两侧一起错（mock 是手写副本），277 条用例 + 97 行比对全绿而真后端一律 400。
+ * 请求体形状从此也进表。
+ */
+const shotsWrapped = await api('PUT', `/admin/projects/${portfolio.id}/screenshots`, {
+  items: [{ url: `${shotBase}-wrapped.png` }],
+})
+check('PUT /screenshots 请求体必须是裸数组（发 { items } → 400）',
+  shotsWrapped.status === 400 && shotsWrapped.json?.error?.code === 'VALIDATION_ERROR',
+  [shotsWrapped.status, shotsWrapped.json?.error?.code],
+)
+
 // 契约 §4.1：body 是裸数组（曾是 { items: [...] }，真后端一律 400 —— 这一行就是证据）
 const metricPut = await api('PUT', `/admin/projects/${portfolio.id}/metadata`, [
   { key_label: 'gzip 包体', value: '42 KB', kind: 'metric' },
   { key_label: '部署平台', value: 'Vercel' },
 ])
 const metricRows = metricPut.json?.metadata ?? []
+const metaWrapped = await api('PUT', `/admin/projects/${portfolio.id}/metadata`, {
+  items: [{ key_label: '部署平台', value: 'Vercel' }],
+})
+check('PUT /metadata 请求体必须是裸数组（发 { items } → 400）',
+  metaWrapped.status === 400 && metaWrapped.json?.error?.code === 'VALIDATION_ERROR',
+  [metaWrapped.status, metaWrapped.json?.error?.code],
+)
 check('元数据条目带 kind，缺省为 meta',
   metricRows.map((m) => m.kind).join(',') === 'metric,meta',
   metricRows.map((m) => m.kind),

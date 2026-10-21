@@ -64,11 +64,12 @@ export const PROGRESS_LABELS: Record<Progress, string> = {
   launched: '已上线',
 }
 
+/** F3：文案按计划 §4.3 第 108 行改（`仓库`→`源码仓库`、`演示`→`在线演示`），列表与详情共用。 */
 export const LINK_TYPE_LABELS: Record<LinkType, string> = {
-  repo: '仓库',
+  repo: '源码仓库',
   site: '官网',
   docs: '文档',
-  demo: '演示',
+  demo: '在线演示',
   other: '其他',
 }
 

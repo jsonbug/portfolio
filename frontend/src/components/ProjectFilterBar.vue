@@ -206,10 +206,13 @@ function clearAll(): void {
   display: inline-flex;
   align-items: center;
   gap: var(--space-8);
+  flex: none;
 }
 .sort-label {
   font-size: var(--fs-small);
   color: var(--c-text-secondary);
+  /* 否则被挤压时会断成「排 / 序」两行 */
+  white-space: nowrap;
 }
 .techs {
   display: flex;
