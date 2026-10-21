@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # 实际开发在 integration/* 与 feat/* 上进行，只看 main 会让 CI 在真正写代码的分支上不跑
+    branches: [main, 'integration/**', 'feat/**']
   pull_request:
 
 jobs:
@@ -65,3 +66,64 @@ jobs:
 
       - name: 测试
         run: npm test
+
+  compose:
+    name: Docker · compose 构建 + 一键起 + 全链路冒烟
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 生成 .env（随机密钥 + 临时口令摘要）
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          SECRET=$(openssl rand -base64 48 | tr -d '\n')
+          HASH=$(node backend/scripts/hash-password.mjs 'ci-smoke-Passw0rd')
+          python3 - "$SECRET" "$HASH" <<'PY'
+          import sys, pathlib
+          secret, hash_ = sys.argv[1], sys.argv[2]
+          p = pathlib.Path('.env')
+          out = []
+          for line in p.read_text().splitlines():
+              if line.startswith('AUTH_SECRET='):
+                  line = f'AUTH_SECRET={secret}'
+              elif line.startswith('ADMIN_PASSWORD_HASH='):
+                  line = f'ADMIN_PASSWORD_HASH={hash_}'
+              out.append(line)
+          p.write_text('\n'.join(out) + '\n')
+          PY
+
+      - name: 打印版本（compose 需 2.30+ 才支持 env_file 的 format raw）
+        run: docker version --format '{{.Server.Version}}' && docker compose version
+
+      - name: 构建镜像
+        run: docker compose build
+
+      - name: 起服务并等 healthy
+        run: |
+          set -euo pipefail
+          docker compose up -d
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/api/v1/health >/dev/null 2>&1; then echo "api ready after ${i}x2s"; exit 0; fi
+            sleep 2
+          done
+          echo '::error::api 未在 120s 内就绪'
+          docker compose ps
+          docker compose logs --no-color --tail 100
+          exit 1
+
+      - name: 全链路冒烟
+        run: ADMIN_PASSWORD='ci-smoke-Passw0rd' node scripts/smoke-compose.mjs --base http://localhost:8080
+
+      - name: 失败时导出容器日志
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      - name: 收尾
+        if: always()
+        run: docker compose down -v

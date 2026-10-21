@@ -39,8 +39,11 @@ node backend/scripts/hash-password.mjs '你的强口令'
 docker compose up -d --build
 
 # 5) 确认
-docker compose ps
+docker compose ps                # 两个服务都应是 healthy
 curl -s http://localhost:8080/api/v1/health
+
+# 6) 全链路冒烟（登录 → 建项目 → 发布 → 前台可见 → 链接重检 → 软删恢复）
+ADMIN_PASSWORD='你的强口令' node scripts/smoke-compose.mjs --base http://localhost:8080
 ```
 
 打开 `http://<host>:8080/` 即前台；后台在 `/admin`（用 `ADMIN_USERNAME` + 上一步的明文口令登录）。
@@ -50,11 +53,14 @@ curl -s http://localhost:8080/api/v1/health
 首次启动 api 会先执行 `prisma migrate deploy`，日志中可见：
 
 ```
-2 migrations found in prisma/migrations
+3 migrations found in prisma/migrations
 Applying migration `20261021113258_init`
 Applying migration `20261021121009_add_cover_image`
+Applying migration `20261021230000_v1_2_data_model`
 All migrations have been successfully applied.
 ```
+
+重启不会重复执行（`No pending migrations to apply.`），数据在命名卷 `sqlite-data` 里。
 
 迁移失败则容器直接退出（不会带着旧 schema 提供服务）。
 
@@ -186,3 +192,43 @@ server {
 ```
 
 上线后需回归：`/api/v1/health`、登录、前台列表/详情、Markdown 笔记渲染、静态资源缓存（`/assets/*` immutable）。
+
+## 11. 受限网络下的构建，与一键冒烟
+
+### 11.1 构建期需要外网的两处（都是可绕过的）
+
+| 步骤 | 依赖 | 拿不到时的后果 |
+| --- | --- | --- |
+| `apk add --no-cache openssl` | Alpine CDN | Dockerfile 里**已容错**：拉不到只打一行 WARN 继续。`node:22-alpine` 自带 `libssl.so.3` / `libcrypto.so.3`，prisma 引擎可正常用 |
+| `npx prisma generate`（builder 阶段） | `binaries.prisma.sh` | 引擎下载不到则**构建失败**（这一步没法容错，引擎是运行时必需） |
+
+`npm ci` 需要能访问 npm registry。离线/内网构建的做法：在有网机器上 `docker save` 两个镜像（`portfolio-api:local` / `portfolio-web:local`）带进内网 `docker load`，再用 `docker compose up -d --no-build` 起（`image:` 名字已固定，不需要重新构建）。
+
+### 11.2 一键冒烟脚本
+
+`scripts/smoke-compose.mjs`：对已起来的一套环境跑完整业务链路，约 70 条断言，失败项逐条打印并返回非 0。
+
+```bash
+ADMIN_PASSWORD='你的强口令' node scripts/smoke-compose.mjs              # 默认 http://localhost:8080
+ADMIN_PASSWORD='你的强口令' node scripts/smoke-compose.mjs --base http://localhost:8180 --slug my-run
+ADMIN_PASSWORD='你的强口令' node scripts/smoke-compose.mjs --public      # 额外做一次真实外网链接重检
+```
+
+覆盖：nginx 静态托管与 `/projects`、`/admin/*` 的 history fallback → `/api/v1` 同源反代（含 `Authorization` 透传）→ 登录 / 401 → 建草稿项目（含链接与笔记）→ 草稿对前台不可见 → 发布后列表/详情/笔记可见 → 后台分段计数与过滤 → 元数据 KV（整体替换 + 重复键名 400）→ B16 链接重检（私网目标必须判 `failed` 且 `last_http_status` 为 null）→ 软删/恢复/`includeDeleted` → 契约错误信封与状态机。
+
+它只读 `--base` 指向的入口、只用标准库 fetch，不接外网（除 `--public`）。CI 的 `compose` job 会跑同一份脚本。
+
+### 11.3 链接健康检查相关变量
+
+`LINK_CHECK_ENABLED` / `LINK_CHECK_TIMEOUT_MS` / `LINK_CHECK_TOTAL_TIMEOUT_MS` / `LINK_CHECK_MAX_REDIRECTS`，都走 `.env`（`env_file` 原本就整份注入），不填用默认值。SSRF 拦截不可关闭：私网/环回/云元数据地址一律直接记 `failed`，且不发出任何请求；后台 UI 只显示「链接不可访问」，被拦原因只进服务端日志。
+
+### 11.4 启动期配置校验
+
+`AUTH_SECRET` 少于 32 字节、用了 dev 占位串、`AUTH_TTL_SECONDS` 非正整数、`ADMIN_PASSWORD_HASH` 不是 `scrypt$<salt>$<hash>` 格式时，api 容器**直接拒绝启动**并打印处理办法，例如：
+
+```
+Error: [env] 生产配置校验失败，拒绝启动：
+  · ADMIN_PASSWORD_HASH：不是 scrypt$<salt>$<hash> 格式（常见原因：compose 把 `$` 后面的段插值吃掉了，或粘贴不完整）；处理：node backend/scripts/hash-password.mjs '你的口令' 重新生成并整行粘贴；compose 的 env_file 必须保留 format: raw
+```
+
+这样 §9 里那个「登录永远 401」的坑会在启动时就暴露，而不是让管理员反复试密码。

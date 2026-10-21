@@ -228,11 +228,19 @@ draft ──publish──▶ published ──archive──▶ archived
 |---|---|---|
 | GET | `/admin/projects` | 列表；`publish_status` / `progress` / `search`（name、summary、slug 子串）/ `includeDeleted`（`true`/`1`）过滤；按 `updated_at` 倒序；额外返回 `counts` 见下 |
 | GET | `/admin/projects/:id` | 详情，含**全部**笔记（含草稿，逐条带 `publish_status`）+ `publish_status` / `published_at` / `deleted_at` / `cover_source_url` |
-| POST | `/admin/projects` | 新建，默认 `publish_status=draft`、`progress=ongoing`；201 |
+| POST | `/admin/projects` | 新建，默认 `publish_status=draft`、`progress=ongoing`；201。**请求体不含 `links` / `metadata`**（见下「链接与元数据是独立资源」） |
 | PATCH | `/admin/projects/:id` | 局部更新；slug 改名规则见下；状态机见 2.1 |
 | DELETE | `/admin/projects/:id` | 软删除（写 `deleted_at`），幂等，返回详情 |
 | POST | `/admin/projects/:id/restore` | 取消软删除 |
-| PUT | `/admin/projects/:id/metadata` | 整体替换自定义 KV（数组，≤50 条，键名不得重复），返回项目详情 |
+| POST | `/admin/projects/:id/links` | 新增一条链接（body `{type, label?, url, sort?}`），201，返回该链接；新增后异步触发健康检查（见 4.4） |
+| PATCH | `/admin/links/:id` | 修改链接（`type` / `label` / `url` / `sort`）；**仅当 `url` 变化时**异步重检 |
+| DELETE | `/admin/links/:id` | 删除链接，204 |
+| PUT | `/admin/projects/:id/metadata` | 整体替换自定义 KV（body 是**裸数组** `[{key_label, value, sort?}]`，≤50 条，键名不得重复），返回项目详情 |
+
+> **链接与元数据是独立资源**（对齐 v1.2 数据模型：`Link`/`ProjectMetadata` 是子表，不是项目表字段）：
+> 新建项目只能带 `ProjectCreate` 里的字段，body 里多余的键（如 `links`、`metadata`）**被忽略而不是报错**——
+> 所以「建项目 + 同时填链接」要分两步：先 `POST /admin/projects` 拿 `id`，再逐条 `POST /admin/projects/:id/links`。
+> 元数据同理，用 `PUT .../metadata` 整体替换（空数组 = 清空）。键名字段是 **`key_label`**，不是 `key`。
 
 **后台分段计数（B9）**：`GET /admin/projects` 的响应在分页信封上额外带 `counts`：
 
@@ -363,5 +371,6 @@ IPv4 映射（`::ffff:`）、NAT64、6to4 里嵌入的 IPv4 同样按上述规�
 |---|---|
 | v1.0 | ALICE-6 MVP 冻结（单字段 `status`、笔记 1:1、`website` 链接类型、camelCase 字段） |
 | v1.2 | 本文件：第五节口径落地，`publish_status`/`progress` 双字段、slug 定位 + 301、笔记 N:1、元数据固定列 + KV、链接枚举调整、`counts` 分段统计 |
+| v1.2.3 | compose 部署冒烟实测发现：建项目 body **不含** `links`/`metadata`（多余键被忽略而非报错），补 4.1「链接与元数据是独立资源」与 `POST /admin/projects/:id/links` / `PATCH|DELETE /admin/links/:id` 行；元数据 body 明确为裸数组、键名字段 `key_label` |
 | v1.2.1 | ALICE-8 冻结核对：后台 `counts`、后台详情笔记 `publish_status`、排序空值、search 字段、login 公开性、slug 命名空间、snake_case、Markdown 责任；补预留端点表 |
 | v1.2.2 | B16 链接健康检查落地：`last_status` 改为 `ok`/`failed`/`unknown`（原 `null` 不再出现）、判定与超时口径、SSRF 防护、`POST /admin/links/:id/check`（见 4.4）；两套 `counts` 对称口径写明；`/notes` 超 100 篇截断提示 |
