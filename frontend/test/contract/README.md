@@ -27,13 +27,16 @@
 
 ```bash
 cd frontend
-npm run contract                        # 只验真后端：必须项 + 带 TODO 标注的行（红行不阻断开退出码）
-npm run contract -- --strict            # 带 TODO 标注的行也算失败（后端修完后用这个当门）
+npm run contract                        # 只验真后端（表里只有 must 行，恒严格）
 npm run contract -- --source mock       # 只验 mock（不需要后端）
-npm run contract -- --source both       # 双向：同一张表两遍 + 逐行 diff（真不一致 → 退出码 1）
+npm run contract -- --source both       # 双向：同一张表两遍 + 逐行 diff（任何不一致 → 退出码 1）
 ```
 
-`--source both` 的判定：同名行逐条比「契约是否满足」。差异若发生在带 `TODO` 标注的行上（真实后端未合、mock 已按契约实现），列为 `⚠ 已知分叉` 不计失败；其余任何差异都算 `真不一致` 并退出 1。
+`--source both` 的判定：同名行逐条比「契约是否满足」。**任何一行结论不同都算「真不一致」并退出 1**——没有「已知分叉」豁免通道。
+
+> `--strict` 参数还认，但已经不再改变结果：整张表只有 `must` 行（结构断言 `assertNoTodoRows` 保证），
+> 任何一行不满足都是失败。想加回「等后端合」的行，必须先删掉那条断言——删断言在 diff 里看得见，
+> 比改一个常量显眼。
 
 可覆盖的环境变量：
 
@@ -57,9 +60,32 @@ npm run contract -- --source both       # 双向：同一张表两遍 + 逐行 d
     | xargs -r -n1 git ls-remote --exit-code --heads origin
   ```
 
-- **已知分叉有硬上限**：`run.mjs` 里 `MAX_KNOWN_DIVERGENCES`（当前 `0`）被写死并断言，`--source both` 超出即把多出来的行算作「真不一致」。上限只会往下调，不放宽。
-- 当前带标注的：**无**（`search` 的 `%`/`_` 与 `NoteSummary.excerpt` 都已合入，6 行归零）。
+- **没有「已知分叉」机制**：`pendingBackend()`、`kind==='todo'` 分支与 `MAX_KNOWN_DIVERGENCES` 都已删除，
+  取而代之的是结构断言「整张表只能是 `must`」。理由是 abuse 通道不能靠常量守——常量可以改大，留一个函数就能标一打 TODO。
+- 清场**只删本次 RUN 前缀的项目**（`cleanupRunProjects()`），不再发全局 reset：身份自证只能证明「库能读能写」，
+  不能证明「库专属于我」；全局清场在端口撞车时就是删别人的数据。因此计数断言全部改成「基线 + 本次增量」
+  （脚本开头打印基线），顺序类断言只在自己这批（`RUN-` 前缀）上判。
 - 表外抽样（不在 15 行对照表内，防「只对快照不对行为」）：`search` 超 200 字 → 400、`search=%` / `search=_` 字面量匹配、`stars` 同分回 `recent`、笔记 >100 篇（pageSize 上限 100 + 真实 `total`）。
 - 公开项目详情**没有** `publish_status`，这是契约决定（可见性过滤后只剩 `published`，放开等于让前台表达它不该知道的状态）；所以详情页元数据里「发布状态」固定渲染「已发布」，归档项目的真实状态只属于后台。
 - mock 侧同口径另有 `frontend/src/mocks/handlers.spec.ts` 单测；「两边同构」由 `--source both` 每次现场比对，不靠这句话担保。
-- `src/mocks/contract-bridge.spec.ts` 断言 **所有行（含 `kind==='todo'`）在 mock 侧必须 satisfied**：只查 `must` 会留「两侧同时违约即静默通过」的洞。
+- `src/mocks/contract-bridge.spec.ts` 断言 **所有行在 mock 侧必须 satisfied**；`--source both` 也断言两侧都只有 `must` 行。
+  只查某一类行会留「两侧同时违约即静默通过」的洞——那对「都错」和「都对」给出同一结果。
+
+## 本表不覆盖
+
+这张表全绿只说明**下面这些协议面同构**，不等于「前后端完全同构」。以下明确不在覆盖范围，别把绿读成全域结论：
+
+| 未覆盖 | 原因 / 现状 |
+|---|---|
+| **错误体内容**（`error.message` 文案、`details[].code` 取值） | 只断言 `error.code` 与 `details[]` 的**键结构**（`field`/`code`/`message`）；文案与词表不承诺稳定，不比对 |
+| `GET /technologies` 的排序与去重 | 只断言「含可见项目的技术栈、不含不可见项目的」与「码点升序无重复」；与后台标签的排序一致性无断言 |
+| 后台两类列表（`/admin/projects`、`/admin/notes`）的 `search` | 契约 3.7 已标 ⚠️ 仍走未转义的 SQL `LIKE`，两侧都未按字面量匹配 |
+| 截图 `screenshots[]` 与元数据 `kind('meta'｜'metric')` | 契约条文已写，可执行行施工中（见 v1.2.6） |
+| 链接健康检查的真实网络判定 | `LINK_CHECK_ENABLED=0` 下只验「保存即写入 `unknown`」与手动重检端点形状，不验外部站点可达性 |
+| 前台 UI 行为 | 那是 `vitest` 组件测试与人工冒烟的范围，本套件只打 HTTP |
+
+## 两个 CI job 的边界
+
+- **compose job**：验容器编排与反代（起 `docker compose`、走反向代理访问、抓日志、`down -v`）。
+- **contract job**：验协议同构（独立 SQLite + `migrate deploy` + 起后端 + `npm run contract -- --source both`）。
+- 两者**互不替代**：container 起不来时 contract 仍可独立证明协议本身；反过来也一样。
