@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { getMockDb, handleMockRequest, resetMockDb } from '@/mocks/handlers'
@@ -221,6 +221,77 @@ describe('ProjectDetailView', () => {
     expect(within(aside).queryByRole('heading', { name: '技术栈' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '相关笔记' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '项目介绍' })).not.toBeInTheDocument()
+  })
+
+  it('截图：一次一张 + 左右箭头 + 「截图 n / N」+ 图注（契约 4.1.1）', async () => {
+    renderDetail('portfolio-platform')
+    await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
+
+    const figure = screen.getByRole('group', { name: '项目截图' })
+    const first = within(figure).getByRole('img')
+    // 有图注 → alt 用图注；首图 eager
+    expect(first).toHaveAttribute('alt', '项目列表：分段与筛选条')
+    expect(first).toHaveAttribute('loading', 'eager')
+    expect(within(figure).getByText('截图 1 / 2')).toBeInTheDocument()
+
+    await fireEvent.click(within(figure).getByRole('button', { name: '下一张截图' }))
+    const second = within(figure).getByRole('img')
+    // 无图注 → alt 回退成「项目名 截图 n」，非首图 lazy
+    expect(second).toHaveAttribute('alt', '项目展示平台 截图 2')
+    expect(second).toHaveAttribute('loading', 'lazy')
+    expect(within(figure).getByText('截图 2 / 2')).toBeInTheDocument()
+
+    // 末张再「下一张」回到第一张（不越界、不置空）
+    await fireEvent.click(within(figure).getByRole('button', { name: '下一张截图' }))
+    expect(within(figure).getByText('截图 1 / 2')).toBeInTheDocument()
+  })
+
+  it('截图：过不了 safeHttpUrl 的历史脏数据整项不渲染', async () => {
+    // 接口层已挡住非法 URL，但库里可能有历史数据——渲染侧再挡一次，不留裂图
+    getMockDb().screenshots.push({
+      id: 'shot_legacy',
+      project_id: 'proj_portfolio',
+      url: 'javascript:alert(1)',
+      caption: '脏数据',
+      sort: 9,
+    })
+    renderDetail('portfolio-platform')
+    await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
+
+    const figure = screen.getByRole('group', { name: '项目截图' })
+    expect(within(figure).getByText('截图 1 / 2')).toBeInTheDocument()
+    expect(within(figure).queryByText('脏数据')).not.toBeInTheDocument()
+    expect(figure.querySelectorAll('img')).toHaveLength(1)
+  })
+
+  it('指标：只取 metadata 里 kind=metric 的条目做统计格，最多 4 格', async () => {
+    renderDetail('portfolio-platform')
+    await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
+
+    const cells = screen.getAllByRole('listitem').filter((li) => li.classList.contains('metric-cell'))
+    // 值 + 标签两段（模板里没有空格分隔，断言用各段文本更稳）
+    expect(cells.map((li) => li.querySelector('.metric-value')?.textContent)).toEqual([
+      '42 KB',
+      '60 fps',
+    ])
+    expect(cells.map((li) => li.querySelector('.metric-label')?.textContent)).toEqual([
+      'gzip 包体',
+      '长音频渲染',
+    ])
+
+    // 右栏元数据 panel 只放 meta 条目：指标卡条目不能同时出现在两边
+    const aside = screen.getByRole('complementary', { name: '项目速览' })
+    expect(within(aside).getByText('代码行数')).toBeInTheDocument()
+    expect(within(aside).queryByText('gzip 包体')).not.toBeInTheDocument()
+  })
+
+  it('零截图 + 零指标：两个区块都不渲染（不留空态框）', async () => {
+    renderDetail('crawler-tools')
+    await screen.findByRole('heading', { level: 1, name: '抓取工具箱' })
+
+    expect(screen.queryByRole('group', { name: '项目截图' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/截图 \d+ \/ \d+/)).not.toBeInTheDocument()
+    expect(document.querySelectorAll('.metric-cell')).toHaveLength(0)
   })
 
   it('旧 slug 301 后仍能渲染（mock 跟随重定向）', async () => {

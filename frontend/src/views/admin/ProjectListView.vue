@@ -182,11 +182,13 @@ async function archiveSelected() {
     }
   }
 
-  // 成功归档的行从选择里摘掉；失败与跳过的保留，用户可以只对它们重试
+  // 选择集 = 未完成项：成功归档的与已归档跳过的都摘掉（两者都不需要再动），
+  // 只留失败项，用户点「重试」时选择集就是待重试集合。
   const nextSelected = new Set(selected.value)
   for (const item of toArchive) {
     if (!failed.includes(item)) nextSelected.delete(item.id)
   }
+  for (const item of skipped) nextSelected.delete(item.id)
   selected.value = nextSelected
 
   batchNotice.value = archiveNotice(archived, failed, skipped)

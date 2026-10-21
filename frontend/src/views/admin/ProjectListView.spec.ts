@@ -395,7 +395,7 @@ describe('ProjectListView', () => {
     expect(screen.getByText('已选 1 项')).toBeInTheDocument()
   })
 
-  it('批量归档跳过已归档项：不发请求，文案注明跳过条数', async () => {
+  it('批量归档跳过已归档项：不发请求，且跳过项从选择集摘掉（选择集 = 未完成项）', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const updateSpy = vi.spyOn(projectsApi, 'updateProject')
 
@@ -410,6 +410,8 @@ describe('ProjectListView', () => {
     // 只对真正需要归档的那一条发了 PATCH
     expect(updateSpy).toHaveBeenCalledTimes(1)
     expect(updateSpy.mock.calls[0][0]).toBe('proj_portfolio')
+    // 跳过项也摘掉：选择集只剩「没处理的」，此时为空
+    expect(screen.getByText('已选 0 项')).toBeInTheDocument()
   })
 
   async function seedProjects(count: number) {

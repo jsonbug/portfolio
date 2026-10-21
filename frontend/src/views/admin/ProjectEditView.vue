@@ -5,6 +5,7 @@ import {
   createProject,
   getAdminProject,
   replaceProjectMetadata,
+  replaceProjectScreenshots,
   updateProject,
 } from '@/api/projects'
 import { addLink, deleteLink, updateLink } from '@/api/links'
@@ -16,9 +17,22 @@ import {
   type AdminNoteListItem,
   type LinkType,
   type MetadataItemInput,
+  type MetadataKind,
   type Progress,
   type PublishStatus,
+  type Screenshot,
+  type ScreenshotInput,
 } from '@/types'
+import {
+  METRIC_KEY_LABEL_MAX,
+  METRIC_MAX,
+  METRIC_VALUE_MAX,
+  META_KEY_LABEL_MAX,
+  META_VALUE_MAX,
+  SCREENSHOT_CAPTION_MAX,
+  SCREENSHOT_MAX,
+  SCREENSHOT_URL_MAX,
+} from '@/constants/limits'
 
 /**
  * 项目编辑器：固定列 + 自定义元数据（KV）+ 链接。
@@ -52,6 +66,26 @@ const meta = reactive({
 const techInput = ref('')
 
 const kvRows = ref<MetadataItemInput[]>([])
+const shotRows = ref<ScreenshotInput[]>([])
+const shotSaving = ref(false)
+
+const METADATA_KIND_OPTIONS: Array<{ value: MetadataKind; label: string }> = [
+  { value: 'meta', label: '元数据行' },
+  { value: 'metric', label: '指标卡' },
+]
+
+/** 已占用的指标格数量（指标卡 ≤2 条，到上限就该在界面上挡，而不是等后端 400）。 */
+const metricCount = computed(() => kvRows.value.filter((row) => row.kind === 'metric').length)
+const metricFull = computed(() => metricCount.value >= METRIC_MAX)
+
+/** 该行是否已达指标卡的长度上限（切换成 metric 后键值都要更短）。 */
+function kvKeyMax(row: MetadataItemInput): number {
+  return row.kind === 'metric' ? METRIC_KEY_LABEL_MAX : META_KEY_LABEL_MAX
+}
+
+function kvValueMax(row: MetadataItemInput): number {
+  return row.kind === 'metric' ? METRIC_VALUE_MAX : META_VALUE_MAX
+}
 
 interface LinkRow {
   id?: string
@@ -110,7 +144,16 @@ async function load() {
     meta.cover_image_url = d.cover_image_url ?? ''
     meta.cover_source_url = d.cover_source_url ?? ''
     techInput.value = d.tech_stack.join(', ')
-    kvRows.value = d.metadata.map((row) => ({ key_label: row.key_label, value: row.value }))
+    kvRows.value = d.metadata.map((row) => ({
+      key_label: row.key_label,
+      value: row.value,
+      kind: row.kind,
+    }))
+    shotRows.value = d.screenshots.map((shot) => ({
+      url: shot.url,
+      caption: shot.caption ?? '',
+      sort: shot.sort,
+    }))
     links.value = d.links.map((l) => ({
       id: l.id,
       type: l.type,
@@ -180,7 +223,12 @@ async function saveMeta() {
 
 // ---------- 自定义元数据 ----------
 function addKvRow() {
-  kvRows.value.push({ key_label: '', value: '' })
+  kvRows.value.push({ key_label: '', value: '', kind: 'meta' })
+}
+
+function addMetricRow() {
+  if (metricFull.value) return
+  kvRows.value.push({ key_label: '', value: '', kind: 'metric' })
 }
 
 function removeKvRow(index: number) {
@@ -189,7 +237,11 @@ function removeKvRow(index: number) {
 
 async function saveMetadata() {
   const rows = kvRows.value
-    .map((row) => ({ key_label: row.key_label.trim(), value: row.value }))
+    .map((row) => ({
+      key_label: row.key_label.trim(),
+      value: row.value,
+      ...(row.kind === 'metric' ? { kind: 'metric' as const } : {}),
+    }))
     .filter((row) => row.key_label)
   const labels = rows.map((row) => row.key_label)
   if (new Set(labels).size !== labels.length) {
@@ -200,12 +252,63 @@ async function saveMetadata() {
   error.value = ''
   try {
     const detail = await replaceProjectMetadata(projectId.value, rows)
-    kvRows.value = detail.metadata.map((row) => ({ key_label: row.key_label, value: row.value }))
+    kvRows.value = detail.metadata.map((row) => ({
+      key_label: row.key_label,
+      value: row.value,
+      kind: row.kind,
+    }))
     notice.value = '自定义元数据已保存'
   } catch (e) {
     error.value = e instanceof Error ? e.message : '保存失败'
   } finally {
     kvSaving.value = false
+  }
+}
+
+// ---------- 截图 ----------
+function addShotRow() {
+  if (shotRows.value.length >= SCREENSHOT_MAX) return
+  shotRows.value.push({ url: '', caption: '', sort: shotRows.value.length })
+}
+
+function removeShotRow(index: number) {
+  shotRows.value.splice(index, 1)
+}
+
+/** 上下移动 = 改 `sort`（整体替换，数组顺序即顺序）。 */
+function moveShot(index: number, delta: number) {
+  const next = index + delta
+  if (next < 0 || next >= shotRows.value.length) return
+  const rows = shotRows.value
+  const [row] = rows.splice(index, 1)
+  rows.splice(next, 0, row)
+  rows.forEach((item, i) => {
+    item.sort = i
+  })
+}
+
+async function saveScreenshots() {
+  const rows = shotRows.value
+    .map((row, index) => ({
+      url: row.url.trim(),
+      caption: row.caption?.trim() ? row.caption.trim() : null,
+      sort: index,
+    }))
+    .filter((row) => row.url)
+  shotSaving.value = true
+  error.value = ''
+  try {
+    const detail = await replaceProjectScreenshots(projectId.value, rows)
+    shotRows.value = detail.screenshots.map((shot: Screenshot) => ({
+      url: shot.url,
+      caption: shot.caption ?? '',
+      sort: shot.sort,
+    }))
+    notice.value = '截图已保存'
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '保存失败'
+  } finally {
+    shotSaving.value = false
   }
 }
 
@@ -373,18 +476,106 @@ onMounted(() => void load())
         <h2 id="kv-title">自定义元数据</h2>
         <p v-if="isNew" class="hint">先创建项目，再添加自定义字段。</p>
         <template v-else>
-          <p class="hint">最多 50 条，键名不可重复；保存时整体替换。</p>
+          <p class="hint">
+            最多 50 条，键名不可重复；保存时整体替换。「指标卡」条目会渲染成前台详情的数字格，
+            最多 {{ METRIC_MAX }} 条（当前 {{ metricCount }}）。
+          </p>
           <ul class="kv-list">
             <li v-for="(row, index) in kvRows" :key="index" class="kv-row">
-              <input v-model="row.key_label" class="input kv-key" type="text" maxlength="50" placeholder="键名，如 部署平台" :aria-label="`第 ${index + 1} 条键名`" />
-              <input v-model="row.value" class="input kv-value" type="text" maxlength="500" placeholder="值" :aria-label="`第 ${index + 1} 条值`" />
+              <select
+                v-model="row.kind"
+                class="select kv-kind"
+                :aria-label="`第 ${index + 1} 条类型`"
+              >
+                <option v-for="option in METADATA_KIND_OPTIONS" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+              <input v-model="row.key_label" class="input kv-key" type="text" :maxlength="kvKeyMax(row)" placeholder="键名，如 部署平台" :aria-label="`第 ${index + 1} 条键名`" />
+              <input v-model="row.value" class="input kv-value" type="text" :maxlength="kvValueMax(row)" placeholder="值" :aria-label="`第 ${index + 1} 条值`" />
               <button class="btn btn-ghost" type="button" @click="removeKvRow(index)">删除</button>
             </li>
           </ul>
           <div class="section-actions">
             <button class="btn" type="button" @click="addKvRow">添加字段</button>
+            <button
+              class="btn"
+              type="button"
+              :disabled="metricFull"
+              :title="metricFull ? `指标卡最多 ${METRIC_MAX} 条` : undefined"
+              @click="addMetricRow"
+            >
+              {{ metricFull ? `指标卡已满（${METRIC_MAX} 条）` : '添加指标卡' }}
+            </button>
             <button class="btn btn-primary" type="button" :disabled="kvSaving" @click="saveMetadata">
               {{ kvSaving ? '保存中…' : '保存自定义字段' }}
+            </button>
+          </div>
+        </template>
+      </section>
+
+      <!-- 截图（整体替换，顺序即 sort） -->
+      <section class="card section" aria-labelledby="shots-title">
+        <h2 id="shots-title">截图</h2>
+        <p v-if="isNew" class="hint">先创建项目，再添加截图。</p>
+        <template v-else>
+          <p class="hint">
+            最多 {{ SCREENSHOT_MAX }} 张，整体替换；地址必须是 http(s) 绝对地址，图注 ≤{{
+              SCREENSHOT_CAPTION_MAX
+            }}
+            字。保存后前台详情按顺序轮播，零张时整个区块不显示。
+          </p>
+          <ul class="shot-list">
+            <li v-for="(row, index) in shotRows" :key="index" class="shot-row">
+              <input
+                v-model="row.url"
+                class="input shot-url"
+                type="url"
+                :maxlength="SCREENSHOT_URL_MAX"
+                placeholder="https://cdn.example.com/shot.webp"
+                :aria-label="`第 ${index + 1} 张截图地址`"
+              />
+              <input
+                v-model="row.caption"
+                class="input shot-caption"
+                type="text"
+                :maxlength="SCREENSHOT_CAPTION_MAX"
+                placeholder="图注（可选）"
+                :aria-label="`第 ${index + 1} 张图注`"
+              />
+              <button
+                class="btn btn-ghost btn-sm"
+                type="button"
+                :disabled="index === 0"
+                :aria-label="`上移第 ${index + 1} 张`"
+                @click="moveShot(index, -1)"
+              >
+                ↑
+              </button>
+              <button
+                class="btn btn-ghost btn-sm"
+                type="button"
+                :disabled="index === shotRows.length - 1"
+                :aria-label="`下移第 ${index + 1} 张`"
+                @click="moveShot(index, 1)"
+              >
+                ↓
+              </button>
+              <button class="btn btn-ghost" type="button" @click="removeShotRow(index)">删除</button>
+            </li>
+          </ul>
+          <div class="section-actions">
+            <button
+              class="btn"
+              type="button"
+              :disabled="shotRows.length >= SCREENSHOT_MAX"
+              :title="shotRows.length >= SCREENSHOT_MAX ? `最多 ${SCREENSHOT_MAX} 张` : undefined"
+              @click="addShotRow"
+            >
+              添加截图
+            </button>
+            <button class="btn btn-primary" type="button" :disabled="shotSaving" @click="saveScreenshots">
+              {{ shotSaving ? '保存中…' : '保存截图' }}
             </button>
           </div>
         </template>
@@ -518,8 +709,26 @@ onMounted(() => void load())
   flex-wrap: wrap;
   align-items: center;
 }
+.kv-kind {
+  width: 120px;
+  flex: none;
+}
 .kv-key {
   width: 200px;
+  flex: none;
+}
+.shot-row {
+  display: flex;
+  gap: var(--sp-1);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.shot-url {
+  flex: 1;
+  min-width: 240px;
+}
+.shot-caption {
+  width: 260px;
   flex: none;
 }
 .kv-value {
@@ -559,7 +768,8 @@ onMounted(() => void load())
     grid-column: span 1;
   }
   .link-row,
-  .kv-row {
+  .kv-row,
+  .shot-row {
     flex-direction: column;
     align-items: stretch;
   }
@@ -567,7 +777,10 @@ onMounted(() => void load())
   .link-label,
   .link-url,
   .kv-key,
-  .kv-value {
+  .kv-value,
+  .kv-kind,
+  .shot-url,
+  .shot-caption {
     width: 100%;
   }
 }
