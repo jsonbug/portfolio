@@ -43,3 +43,9 @@ attachments/
 
 # 交付 tarball（不提交）
 *.tar.gz
+
+# SQLite 备份产物（部署备份，勿提交）
+backups/
+
+# 本地端到端验证临时文件
+.e2e-pid

@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+# 前端镜像（多阶段）：node:24-alpine 构建静态产物 → nginx:alpine 托管 + /api/v1 同源反代。
+# 构建上下文 = 仓库根目录，故 COPY 路径带 frontend/ 前缀。
+#   docker build -f Dockerfile.web -t portfolio-web .
+# API 地址与 mock 开关在构建期注入（Vite 的环境变量是编译期替换，不是运行时）。
+
+# ---------- builder ----------
+FROM node:24-alpine AS builder
+WORKDIR /app
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+
+# 生产构建固定走真实后端、同源 /api/v1（反向代理到 api 服务）
+ARG VITE_API_BASE_URL=/api/v1
+ARG VITE_USE_MOCK=false
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL} \
+    VITE_USE_MOCK=${VITE_USE_MOCK}
+
+RUN npm run build
+
+# ---------- runtime ----------
+FROM nginx:alpine AS runtime
+
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1

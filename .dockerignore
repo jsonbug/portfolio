@@ -1,0 +1,23 @@
+# docker 构建上下文忽略（根上下文同时服务 Dockerfile.api / Dockerfile.web）
+.git
+.gitignore
+.github
+**/node_modules
+**/dist
+**/dist-ssr
+**/coverage
+**/.env
+**/.env.*
+!**/.env.example
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+**/*.sqlite
+**/*.sqlite3
+*.tar.gz
+**/.vscode
+**/.idea
+**/.DS_Store
+docs
+README.md

@@ -1,0 +1,65 @@
+# 项目展示平台 · docker compose（api + web 同源反代）
+#
+# 首次使用：
+#   cp .env.example .env      # 再按 .env 内注释生成 AUTH_SECRET / ADMIN_PASSWORD_HASH
+#   docker compose up -d --build
+#   打开 http://localhost:${WEB_PORT:-8080}/
+#
+# 密钥只经 env_file 在运行时注入容器，不进入镜像层。
+
+name: portfolio
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: portfolio-api:local
+    env_file:
+      # format: raw 必须保留：ADMIN_PASSWORD_HASH 形如 scrypt$<salt>$<hash>，
+      # 默认格式会把它当变量插值（$fc18… → 空串），导致登录永远失败。
+      - path: .env
+        format: raw
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: 0.0.0.0
+      # SQLite 落在命名卷 sqlite-data（容器内 /data），删容器不丢数据
+      DATABASE_URL: file:/data/prod.db
+    volumes:
+      - sqlite-data:/data
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 25s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        # 构建期注入：同源代理路径 + 关闭 mock
+        VITE_API_BASE_URL: /api/v1
+        VITE_USE_MOCK: "false"
+    image: portfolio-web:local
+    ports:
+      # 宿主端口可覆盖（如 8080 被占用：WEB_PORT=8180 docker compose up -d）
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  sqlite-data:

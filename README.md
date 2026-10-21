@@ -44,3 +44,15 @@ npm run dev
 - `backend`：prisma validate / typecheck / lint / test
 
 `deploy.yml` 为部署骨架（当前仅构建前端并产出产物，阶段 4 上线前追加对应 provider 的发布步骤）。
+
+## Docker 部署（推荐）
+
+两服务同源反代：`web`（nginx 托管前端 + `/api/v1` 反代）与 `api`（Fastify + Prisma/SQLite）。
+
+```bash
+cp .env.example .env                              # 填 AUTH_SECRET / ADMIN_PASSWORD_HASH
+node backend/scripts/hash-password.mjs '口令'      # 生成 ADMIN_PASSWORD_HASH
+docker compose up -d --build                      # 默认 http://localhost:8080/
+```
+
+完整说明（迁移、备份/恢复、改密码、看日志、接 HTTPS 反代）见 `docs/deployment.md`。

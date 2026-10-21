@@ -1,0 +1,51 @@
+# syntax=docker/dockerfile:1
+# 后端镜像（多阶段）：builder 装依赖 + prisma generate + tsc 编译；runtime 仅运行。
+# 构建上下文 = 仓库根目录，故所有 COPY 路径都带 backend/ 前缀。
+#   docker build -f Dockerfile.api -t portfolio-api .
+# 运行时环境变量（AUTH_SECRET / ADMIN_PASSWORD_HASH / ADMIN_USERNAME）一律由
+# docker-compose 的 env_file 注入，不写入镜像层，也不写进镜像 ENV。
+
+# ---------- builder ----------
+FROM node:22-alpine AS builder
+WORKDIR /app
+
+# prisma 引擎在 alpine 上依赖 openssl
+RUN apk add --no-cache openssl
+
+COPY backend/package.json backend/package-lock.json ./
+RUN npm ci
+
+COPY backend/prisma ./prisma
+# 生成 @prisma/client 到 node_modules/.prisma（随 node_modules 一起进入 runtime）
+RUN npx prisma generate
+
+COPY backend/tsconfig.json ./
+COPY backend/src ./src
+RUN npm run build
+
+# ---------- runtime ----------
+FROM node:22-alpine AS runtime
+WORKDIR /app
+
+# 非 root：使用镜像内置的 node（uid/gid 1000）；/data 为 SQLite 命名卷挂载点
+RUN apk add --no-cache openssl \
+  && mkdir -p /data \
+  && chown -R node:node /data
+
+ENV NODE_ENV=production \
+    PORT=3000 \
+    HOST=0.0.0.0 \
+    DATABASE_URL=file:/data/prod.db
+
+# node_modules 含 prisma CLI（devDependency），启动时用它跑 migrate deploy；
+# 影像略大但避免运行期联网下载引擎，迁移与应用版本始终一致。
+COPY --from=builder --chown=root:root /app/package.json /app/package-lock.json ./
+COPY --from=builder --chown=root:root /app/node_modules ./node_modules
+COPY --from=builder --chown=root:root /app/prisma ./prisma
+COPY --from=builder --chown=root:root /app/dist ./dist
+
+USER node
+EXPOSE 3000
+
+# 先迁移再起服务：迁移失败则容器启动失败（不会带着旧 schema 提供服务）
+CMD ["sh", "-c", "npx prisma migrate deploy && exec node dist/index.js"]

@@ -1,0 +1,11 @@
+# 前端单独作为构建上下文时的忽略规则（当前 compose 用仓库根上下文，规则见 /。dockerignore）
+node_modules
+dist
+dist-ssr
+coverage
+.env
+.env.*
+!.env.example
+.vscode
+.idea
+.DS_Store
