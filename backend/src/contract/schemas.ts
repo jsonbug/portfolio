@@ -124,6 +124,9 @@ export const NoteSummarySchema = z.object({
   slug: z.string(),
   title: z.string(),
   project: z.object({ slug: z.string(), name: z.string() }),
+  // 去 Markdown 后的前 120 字（超长加省略号，空正文 null）：列表 / 详情 / 后台三条路径共用，
+  // 详情不开口子，否则前端要为「有摘要」「没摘要」写两套渲染分支（契约 v1.2.3 §3.3）
+  excerpt: z.string().max(121).nullable(),
   tags: z.array(z.string()),
   published_at: isoDatetime().nullable(),
   created_at: isoDatetime(),
