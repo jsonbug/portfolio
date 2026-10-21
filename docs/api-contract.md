@@ -1,6 +1,6 @@
 # API 契约（冻结 · v1.2）
 
-> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
+> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1，见第 5 节）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
 > 代码参考（可执行形态）：`backend/src/contract/schemas.ts`；本文档与 `schemas.ts` 是同一契约的两种载体，
 > 任何改动都是契约变更，需在 issue 中说明。
 >
@@ -21,6 +21,8 @@
 | 认证 | 写接口 `/api/v1/admin/**` 需 `Authorization: Bearer <token>`；前台读接口公开 |
 | 分页 | offset 分页：`page`（≥1，默认 1）、`pageSize`（1..100，默认 20） |
 | PATCH 语义 | 未传字段忽略；显式 `null` 清空 nullable 字段；数组字段传值即整体替换（`[]` 清空） |
+| 字段命名 | **wire 上一律 `snake_case`**（与第五节表结构同名）；前端不做 camelCase 映射 |
+| Markdown | 后端只存原文（`description_md` / `body_md`），**不做 HTML 净化**；渲染侧（前端 DOMPurify，禁 raw HTML）负责 XSS 过滤（N2） |
 
 ### 1.1 成功响应信封
 
@@ -103,7 +105,7 @@ draft ──publish──▶ published ──archive──▶ archived
 | `search` | string | 匹配 `name` / `summary`（子串，大小写不敏感由 SQLite LIKE 决定） |
 | `technology` | string[] | 技术栈名多选，**任一命中**；支持 `?technology=Vue&technology=Node` 或 `?technology=Vue,Node` |
 | `progress` | `ongoing` \| `launched` | 进展分段；不传 = 全部 |
-| `sort` | `recent`（默认）\| `stars` | `recent` 用 `last_updated_at`，为空回退系统 `updated_at` |
+| `sort` | `recent`（默认）\| `stars` | `recent` 用 `last_updated_at`，为空回退系统 `updated_at`；`stars` 降序、`stars` 为 null 的排最后，同分再按 `recent` 兜底 |
 | `page` / `pageSize` | int | 见通用约定 |
 
 响应（`items[]` 为 `ProjectListItem`）：
@@ -187,7 +189,10 @@ draft ──publish──▶ published ──archive──▶ archived
 | `tag` | 标签精确匹配 |
 | `page` / `pageSize` | 分页 |
 
-`items[]` 为 `NoteSummary`（同上 `notes` 元素结构），按 `published_at` 倒序。
+`items[]` 为 `NoteSummary`（同上 `notes` 元素结构），按 `published_at` 倒序（空值再按 `created_at` 倒序）。
+
+> 分组口径：F4 的「左栏按项目分组」由前端在已取回的列表上分组，本接口**不提供**分组聚合或 `project` 过滤参数。
+> 笔记量级小（个人站），前端用 `pageSize=100` 一次取全后分组；跨页分组的语义不在本契约内。
 
 ### 3.4 `GET /notes/:slug` — 笔记详情
 
@@ -213,13 +218,23 @@ draft ──publish──▶ published ──archive──▶ archived
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/admin/projects` | 列表；`publish_status` / `progress` / `search`（name、summary、slug）/ `includeDeleted`（`true`/`1`）过滤；按 `updated_at` 倒序 |
-| GET | `/admin/projects/:id` | 详情，含**全部**笔记（含草稿）+ `publish_status` / `published_at` / `deleted_at` / `cover_source_url` |
+| GET | `/admin/projects` | 列表；`publish_status` / `progress` / `search`（name、summary、slug 子串）/ `includeDeleted`（`true`/`1`）过滤；按 `updated_at` 倒序；额外返回 `counts` 见下 |
+| GET | `/admin/projects/:id` | 详情，含**全部**笔记（含草稿，逐条带 `publish_status`）+ `publish_status` / `published_at` / `deleted_at` / `cover_source_url` |
 | POST | `/admin/projects` | 新建，默认 `publish_status=draft`、`progress=ongoing`；201 |
 | PATCH | `/admin/projects/:id` | 局部更新；slug 改名规则见下；状态机见 2.1 |
 | DELETE | `/admin/projects/:id` | 软删除（写 `deleted_at`），幂等，返回详情 |
 | POST | `/admin/projects/:id/restore` | 取消软删除 |
 | PUT | `/admin/projects/:id/metadata` | 整体替换自定义 KV（数组，≤50 条，键名不得重复），返回项目详情 |
+
+**后台分段计数（B9）**：`GET /admin/projects` 的响应在分页信封上额外带 `counts`：
+
+```json
+{ "items": [], "page": 1, "pageSize": 20, "total": 3, "totalPages": 1,
+  "counts": { "all": 3, "draft": 1, "published": 1, "archived": 1 } }
+```
+
+口径：`search` + `includeDeleted` 过滤后、`publish_status` / `progress` 过滤前的集合；`all = draft + published + archived`。
+分段切换不改 `counts`（分段数字始终是全部口径），搜索会重算。
 
 `POST` / `PATCH` 请求体（`ProjectUpsert`）：
 
@@ -254,7 +269,7 @@ draft ──publish──▶ published ──archive──▶ archived
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/admin/notes` | 列表；`project_id` / `publish_status` / `search` 过滤；按 `updated_at` 倒序；**不含 `body_md`** |
+| GET | `/admin/notes` | 列表；`project_id` / `publish_status` / `search`（title、body_md、slug 子串）过滤；按 `updated_at` 倒序；**不含 `body_md`** |
 | POST | `/admin/notes` | 新建，`project_id` 必填（项目不存在 → 404）；201 |
 | GET | `/admin/notes/:id` | 详情，含 `body_md` |
 | PATCH | `/admin/notes/:id` | 局部更新；`tags` 整体替换；`publish_status` 变更维护 `published_at`；slug 改名规则同项目 |
@@ -263,18 +278,48 @@ draft ──publish──▶ published ──archive──▶ archived
 `NoteCreate` / `NoteUpdate`：`slug`（`^[a-z0-9-]{2,64}$`，note 命名空间唯一）、`title`（≤200）、
 `body_md`（1..100k）、`publish_status`、`tags`（≤20 个，每个 ≤50）。
 
+> slug 口径（收敛 B8 与第五节的措辞差异）：笔记 slug 在**笔记集合内**唯一，项目 slug 在**项目集合内**唯一，
+> 两者可同名——`slug_aliases` 的唯一键是 `(entity_type, slug)`，`/projects/:slug` 与 `/notes/:slug` 是两个命名空间。
+> B8 的「全站唯一」按此理解（不与项目 slug 互斥），否则两侧改名会互锁。
+
 ### 4.3 认证
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/auth/login` | `{ username, password }` → `{ token, expiresAt }`；失败 401 |
+| POST | `/auth/login` | **公开接口（不需要 Bearer）**：`{ username, password }` → `{ token, expiresAt }`；失败 401 `UNAUTHORIZED`，不区分账号不存在与密码错误 |
+
+> `Authorization: Bearer <token>` 只作用于 `/api/v1/admin/**`；`/auth/login`、`/health`、前台读接口均无需鉴权。
 
 > 阶段 1 说明：登录仍读环境变量（`ADMIN_USERNAME` / `ADMIN_PASSWORD_HASH`）；`admin_users` 表已随迁移建好，
 > 改为库内账号（D1 密码登录）在阶段 2.1 落地。
 
-## 5. 变更记录
+## 5. 冻结核对与预留（ALICE-8，2026-10-21）
+
+逐条核对《开发计划 v1.2》第五节 + `docs/frontend-gap-v1.2.md` 第一节后，本版补齐的缺口（均已实现 + 有测试）：
+
+| # | 缺口 | 处理 |
+|---|---|---|
+| 1 | 后台列表没有分段计数（B9 要求「全部 / 已发布 / 草稿 / 已归档 + 计数」） | `GET /admin/projects` 新增 `counts`（口径见 4.1） |
+| 2 | 后台项目详情笔记列表无 `publish_status`，编辑器无法区分草稿 | 详情 `notes[]` 增加 `publish_status` |
+| 3 | 排序未定义 `stars` 空值次序 | `stars` 降序、null 最后、同分回 `recent` |
+| 4 | `search` 匹配字段未写全 | 前后台各自的匹配字段已在 3.1 / 4.1 / 4.2 写明 |
+| 5 | `/auth/login` 被列在「需 Bearer」小节，易被误实现 | 标注为公开接口，Bearer 只覆盖 `/admin/**` |
+| 6 | B8「笔记 slug 全站唯一」与第五节两命名空间措辞冲突 | 按命名空间口径收敛（见 4.2 注） |
+| 7 | 序列化命名悬而未决（gap 文档第一节末注） | 冻结为 `snake_case`（见 1. 通用约定） |
+| 8 | Markdown 净化责任未写 | 后端存原文，前端渲染侧净化（N2） |
+
+**预留（形状已定，实现未完成，前端本轮不要对接）**：
+
+| 方法 | 路径 | 落地阶段 |
+|---|---|---|
+| POST | `/admin/links/:id/check` | 2.6（B16 立即重检；返回更新后的 `Link`，`last_status`/`last_http_status`/`last_checked_at` 仍只读） |
+| GET | `/admin/overview` | 2.x（B12 P1 概览计数） |
+| GET/PATCH | `/admin/settings` | 2.x（B13 P1 站点设置） |
+
+## 6. 变更记录
 
 | 版本 | 变更 |
 |---|---|
 | v1.0 | ALICE-6 MVP 冻结（单字段 `status`、笔记 1:1、`website` 链接类型、camelCase 字段） |
 | v1.2 | 本文件：第五节口径落地，`publish_status`/`progress` 双字段、slug 定位 + 301、笔记 N:1、元数据固定列 + KV、链接枚举调整、`counts` 分段统计 |
+| v1.2.1 | ALICE-8 冻结核对：后台 `counts`、后台详情笔记 `publish_status`、排序空值、search 字段、login 公开性、slug 命名空间、snake_case、Markdown 责任；补预留端点表 |

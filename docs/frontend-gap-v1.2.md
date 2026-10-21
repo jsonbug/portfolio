@@ -21,7 +21,8 @@
 | 无 `version/last_updated_at` | 列表/详情展示 `stars · version · last_updated_at`（手填） | 类型 + 卡片/详情 |
 | `mocks/db.ts`、`mocks/handlers.ts` 全按旧契约 | 按第五节重建（含 slug 301、`published` 可见性口径） | 重写（前端并行开工的运行基础） |
 
-> 前端沿用现有 camelCase 序列化（`publishStatus` / `progress` / `coverImageUrl`），待后端 delta 确认；若后端改为 snake_case，改 `types/*` + 序列化层即可，页面不感知。
+> 前端序列化口径**已定**（ALICE-8 冻结核对）：wire 一律 `snake_case`（`publish_status` / `progress` / `cover_image_url`），
+> 与第五节表结构同名，前端不做 camelCase 映射；改 `types/*` 与序列化层即可，页面不感知。详见 `docs/api-contract.md` 第 1 节。
 
 ## 二、路由
 

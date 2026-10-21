@@ -187,6 +187,10 @@ export function toAdminDetail(p: AdminProjectDetailRow): AdminProjectDetail {
     start_year: p.start_year,
     team_size: p.team_size,
     metadata: metadataItems(p.metadata),
-    notes: p.notes.map((n) => toNoteSummary(n, { slug: p.slug, name: p.name })),
+    // 后台详情含全部笔记（含草稿），逐条带 publish_status 供编辑器区分（前台详情只出已发布）
+    notes: p.notes.map((n) => ({
+      ...toNoteSummary(n, { slug: p.slug, name: p.name }),
+      publish_status: n.publish_status as AdminProjectDetail["notes"][number]["publish_status"],
+    })),
   };
 }

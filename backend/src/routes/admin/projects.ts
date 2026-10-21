@@ -69,10 +69,9 @@ async function assertSlugFree(slug: string, excludeId?: string): Promise<void> {
 export async function adminProjectRoutes(app: FastifyInstance) {
   app.get("/projects", async (req) => {
     const q = validate(AdminProjectListQuerySchema, req.query);
-    const where: Prisma.ProjectWhereInput = {
+    // 分段计数口径（B9）：search + includeDeleted 过滤后、publish_status 过滤前的集合
+    const baseWhere: Prisma.ProjectWhereInput = {
       ...(q.includeDeleted ? {} : { deleted_at: null }),
-      ...(q.publish_status ? { publish_status: q.publish_status } : {}),
-      ...(q.progress ? { progress: q.progress } : {}),
       ...(q.search
         ? {
             OR: [
@@ -83,8 +82,13 @@ export async function adminProjectRoutes(app: FastifyInstance) {
           }
         : {}),
     };
+    const where: Prisma.ProjectWhereInput = {
+      ...baseWhere,
+      ...(q.publish_status ? { publish_status: q.publish_status } : {}),
+      ...(q.progress ? { progress: q.progress } : {}),
+    };
 
-    const [rows, total] = await prisma.$transaction([
+    const [rows, total, draftCount, publishedCount, archivedCount] = await prisma.$transaction([
       prisma.project.findMany({
         where,
         include: adminProjectListInclude,
@@ -93,7 +97,18 @@ export async function adminProjectRoutes(app: FastifyInstance) {
         take: q.pageSize,
       }),
       prisma.project.count({ where }),
+      prisma.project.count({ where: { ...baseWhere, publish_status: "draft" } }),
+      prisma.project.count({ where: { ...baseWhere, publish_status: "published" } }),
+      prisma.project.count({ where: { ...baseWhere, publish_status: "archived" } }),
     ]);
+
+    // 四项满足 all = draft + published + archived（publish_status 三值穷尽）
+    const counts = {
+      all: draftCount + publishedCount + archivedCount,
+      draft: draftCount,
+      published: publishedCount,
+      archived: archivedCount,
+    };
 
     return {
       items: rows.map(toAdminListItem),
@@ -101,6 +116,7 @@ export async function adminProjectRoutes(app: FastifyInstance) {
       pageSize: q.pageSize,
       total,
       totalPages: Math.ceil(total / q.pageSize),
+      counts,
     };
   });
 

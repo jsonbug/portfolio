@@ -162,6 +162,13 @@ export const AdminNoteDetailSchema = AdminNoteListItemSchema.extend({
 });
 export type AdminNoteDetail = z.infer<typeof AdminNoteDetailSchema>;
 
+// 项目详情的笔记列表（后台）额外带发布状态：编辑器要在项目内区分草稿/已发布
+// （前台详情 same 位置只出已发布笔记，见 ProjectDetailSchema）
+export const AdminNoteSummarySchema = NoteSummarySchema.extend({
+  publish_status: NotePublishStatusSchema,
+});
+export type AdminNoteSummary = z.infer<typeof AdminNoteSummarySchema>;
+
 // ---------- 项目 ----------
 export const ProjectListItemSchema = z.object({
   id: z.string(),
@@ -229,8 +236,19 @@ export const AdminProjectDetailSchema = ProjectDetailSchema.extend({
   published_at: isoDatetime().nullable(),
   cover_source_url: z.string().nullable(),
   deleted_at: isoDatetime().nullable(),
+  notes: z.array(AdminNoteSummarySchema),
 });
 export type AdminProjectDetail = z.infer<typeof AdminProjectDetailSchema>;
+
+// 后台列表分段计数（B9：全部 / 已发布 / 草稿 / 已归档）
+// 口径：search + includeDeleted 过滤后、publish_status 过滤前的集合；四项满足 all = 后三者之和
+export const AdminProjectCountsSchema = z.object({
+  all: z.number().int(),
+  draft: z.number().int(),
+  published: z.number().int(),
+  archived: z.number().int(),
+});
+export type AdminProjectCounts = z.infer<typeof AdminProjectCountsSchema>;
 
 // ---------- 列表查询 ----------
 // Fastify query 为字符串；布尔参数兼容 true/false/1/0/空（空=默认）

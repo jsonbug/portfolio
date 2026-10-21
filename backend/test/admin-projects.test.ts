@@ -321,6 +321,55 @@ describe("GET /api/v1/admin/projects（后台列表）", () => {
     expect(item.deleted_at).toBeNull();
   });
 
+  it("counts 四段口径：全部 / 已发布 / 草稿 / 已归档（含软删除时同口径）", async () => {
+    await createProject(app, token, { name: "草稿 A" });
+    await createProject(app, token, { name: "草稿 B" });
+    await createProject(app, token, { name: "已发布 A", publish_status: "published" });
+    const archived = await createProject(app, token, { name: "已归档 A", publish_status: "archived" });
+    const removed = await createProject(app, token, { name: "已删除", publish_status: "published" });
+    await app.inject({
+      method: "DELETE",
+      url: `/api/v1/admin/projects/${removed.id}`,
+      headers: auth(token),
+    });
+
+    const res = await app.inject({ method: "GET", url: "/api/v1/admin/projects", headers: auth(token) });
+    const body = res.json() as { counts: Record<string, number>; total: number };
+    // 软删除项目默认不计入；all = draft + published + archived
+    expect(body.counts).toEqual({ all: 4, draft: 2, published: 1, archived: 1 });
+    expect(body.total).toBe(4);
+
+    // 分段过滤不改 counts（分段数字始终显示全部口径）
+    const onlyDraft = await app.inject({
+      method: "GET",
+      url: "/api/v1/admin/projects?publish_status=draft",
+      headers: auth(token),
+    });
+    expect((onlyDraft.json() as { counts: Record<string, number> }).counts).toEqual(body.counts);
+    expect((onlyDraft.json() as { total: number }).total).toBe(2);
+
+    // 搜索后 counts 按搜索结果重算；includeDeleted 把软删除计回
+    const searched = await app.inject({
+      method: "GET",
+      url: "/api/v1/admin/projects?search=已归档",
+      headers: auth(token),
+    });
+    expect((searched.json() as { counts: Record<string, number> }).counts.all).toBe(1);
+    expect(archived.publish_status).toBe("archived");
+
+    const withDeleted = await app.inject({
+      method: "GET",
+      url: "/api/v1/admin/projects?includeDeleted=true",
+      headers: auth(token),
+    });
+    expect((withDeleted.json() as { counts: Record<string, number> }).counts).toEqual({
+      all: 5,
+      draft: 2,
+      published: 2,
+      archived: 1,
+    });
+  });
+
   it("未带 Bearer → 401", async () => {
     const res = await app.inject({ method: "GET", url: "/api/v1/admin/projects" });
     expect(res.statusCode).toBe(401);
@@ -345,8 +394,18 @@ describe("GET /api/v1/admin/projects/:id", () => {
 
     const res = await get(project.id);
     expect(res.statusCode).toBe(200);
-    const body = res.json() as { notes: Array<{ title: string }>; cover_source_url: string | null };
+    const body = res.json() as {
+      notes: Array<{ title: string; publish_status: string }>;
+      cover_source_url: string | null;
+    };
     expect(body.notes).toHaveLength(2);
+    // 编辑器要在项目内区分草稿/已发布（笔记 N:1 后同一项目多篇笔记）
+    expect(body.notes.map((n) => [n.title, n.publish_status])).toEqual(
+      expect.arrayContaining([
+        ["草稿笔记", "draft"],
+        ["发布笔记", "published"],
+      ]),
+    );
     expect(body.cover_source_url).toBeNull();
   });
 
