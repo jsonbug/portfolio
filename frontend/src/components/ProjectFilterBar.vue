@@ -23,6 +23,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   update: [patch: Partial<ProjectListFilters>]
   search: [q: string]
+  /** 技术栈只发「点了哪个」，由父级基于最新筛选值计算下一份数组（避免连点读到过期 props）。 */
+  toggleTech: [tech: string]
 }>()
 
 const searchText = ref(props.filters.q)
@@ -64,13 +66,6 @@ function countOf(segment: Progress | null): number {
 
 function selectSegment(segment: Progress | null): void {
   emit('update', { progress: segment })
-}
-
-function toggleTech(tech: string): void {
-  const next = props.filters.tech.includes(tech)
-    ? props.filters.tech.filter((t) => t !== tech)
-    : [...props.filters.tech, tech]
-  emit('update', { tech: next })
 }
 
 function changeSort(event: Event): void {
@@ -132,7 +127,7 @@ function clearAll(): void {
           class="tag tech"
           :class="{ 'tech--active': filters.tech.includes(tech) }"
           :aria-pressed="filters.tech.includes(tech)"
-          @click="toggleTech(tech)"
+          @click="emit('toggleTech', tech)"
         >
           {{ tech }}
         </button>

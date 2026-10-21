@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listTechnologies } from '@/api/technologies'
 import ProjectCard from '@/components/ProjectCard.vue'
@@ -67,12 +67,40 @@ const resultAnnouncement = computed(() =>
   loading.value ? '正在加载项目' : `共 ${items.value.length} 个结果`,
 )
 
+/**
+ * 已经发起、但路由还没落定的筛选值。
+ *
+ * `router.replace` 是异步的，同一 tick 内连续两次交互（连点技术栈、快速切分段）时
+ * `route.query` 还是旧值，若以它为基准算下一份筛选就会把上一次改动覆盖掉。
+ * 这里记住最后一次提交的值作为基准，路由落定后清空。
+ */
+let pending: ProjectListFilters | null = null
+
+watch(
+  () => route.query,
+  () => {
+    pending = null
+  },
+  { flush: 'sync' },
+)
+
 function apply(patch: Partial<ProjectListFilters>): void {
-  const next: ProjectListFilters = { ...filters.value, ...patch }
-  const current = JSON.stringify(toQuery(filters.value))
+  const base = pending ?? filters.value
+  const next: ProjectListFilters = { ...base, ...patch }
+  const current = JSON.stringify(toQuery(base))
   const target = JSON.stringify(toQuery(next))
   if (current === target) return
+  pending = next
   void router.replace({ query: toQuery(next) })
+}
+
+/** 技术栈开合：以「最后一次提交的筛选值」为基准算下一份数组，连点也不会丢改动。 */
+function toggleTech(tech: string): void {
+  const base = pending ?? filters.value
+  const next = base.tech.includes(tech)
+    ? base.tech.filter((t) => t !== tech)
+    : [...base.tech, tech]
+  apply({ tech: next })
 }
 
 function clearFilters(): void {
@@ -97,6 +125,7 @@ function clearFilters(): void {
       :technologies="technologies"
       @update="apply"
       @search="(q) => apply({ q })"
+      @toggle-tech="toggleTech"
     />
 
     <p class="sr-only" aria-live="polite">{{ resultAnnouncement }}</p>
