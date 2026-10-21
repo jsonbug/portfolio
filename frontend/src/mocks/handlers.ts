@@ -52,6 +52,7 @@ import {
   updateProject,
   type DbState,
 } from './db'
+import { MAX_SEARCH_LENGTH } from '@/utils/text'
 
 let state: DbState = createDbState()
 
@@ -245,7 +246,7 @@ function validateMetadataInput(input: unknown): ErrorDetail[] {
     return [{ field: 'items', code: 'required', message: 'items 必须为数组' }]
   }
   if (items.length > 50) {
-    return [{ field: 'items', code: 'max_items', message: '自定义元数据最多 50 条' }]
+    return [{ field: 'items', code: 'too_big', message: '自定义元数据最多 50 条' }]
   }
   const details: ErrorDetail[] = []
   const seen = new Set<string>()
@@ -268,9 +269,10 @@ function validateMetadataInput(input: unknown): ErrorDetail[] {
 // ---------- 查询参数 ----------
 
 /**
- * 解析分页参数：**不夹取**（契约 1：越界一律 400）。
+ * 解析分页参数：**参数非法**（非整数、`page < 1`、`pageSize ∉ 1..100`）→ 400。
  *
- * 与真实后端一致：`page < 1`、`pageSize` 不在 1..100、非整数都算参数错误。
+ * 注意与「语义越界」区分：`page > totalPages`（后台删掉最后一条后刷新、手改 URL 到第 99 页）
+ * 是合法请求的副作用，返回 200 + 空 items + 真实 total/totalPages（契约 1），不在这里拦。
  */
 function parsePage(
   query: URLSearchParams,
@@ -279,27 +281,31 @@ function parsePage(
   const page = Number(query.get('page') ?? 1)
   const pageSize = Number(query.get('pageSize') ?? 20)
   if (!Number.isInteger(page) || page < 1) {
-    details.push({ field: 'page', code: 'RANGE', message: '必须是 ≥ 1 的整数' })
+    // 契约不定义 details[].code 词表（后端透传 zod issue code，前端不得分支），这里只给 message
+    details.push({ field: 'page', code: 'invalid', message: '必须是 ≥ 1 的整数' })
   }
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
-    details.push({ field: 'pageSize', code: 'RANGE', message: '必须是 1..100 的整数' })
+    details.push({ field: 'pageSize', code: 'invalid', message: '必须是 1..100 的整数' })
   }
   if (details.length) return errorResponse(400, 'VALIDATION_ERROR', '请求参数校验失败', details)
   return { page, pageSize }
 }
 
-/** 页码超出最后一页 → 400（契约 1：越界不夹取、不返回空页）。 */
-function beyondLastPage(page: number, totalPages: number): boolean {
-  return page > Math.max(1, totalPages)
-}
-
-function pageOutOfRange(totalPages: number): Response {
-  return errorResponse(400, 'VALIDATION_ERROR', '请求参数校验失败', [
-    { field: 'page', code: 'RANGE', message: `超出总页数（${totalPages}）` },
-  ])
-}
-
 /** 支持 `?technology=A&technology=B` 与 `?technology=A,B` 两种写法（契约 3.1）。 */
+/**
+ * 解析 `search`：与真实后端 zod 一致，超过 200 字直接 400（前端输入框已收口，手改 URL 也不该放过）。
+ * 契约不定义 details[].code 词表，这里只保证 VALIDATION_ERROR + field + message。
+ */
+function parseSearch(query: URLSearchParams): string | undefined | Response {
+  const search = query.get('search') ?? undefined
+  if (search !== undefined && search.length > MAX_SEARCH_LENGTH) {
+    return errorResponse(400, 'VALIDATION_ERROR', '请求参数校验失败', [
+      { field: 'search', code: 'too_big', message: `最多 ${MAX_SEARCH_LENGTH} 字符` },
+    ])
+  }
+  return search
+}
+
 function queryList(query: URLSearchParams, key: string): string[] {
   return query
     .getAll(key)
@@ -362,17 +368,16 @@ function notFound(what = '资源'): Response {
 function handlePublicProjectList(query: URLSearchParams): Response {
   const paging = parsePage(query)
   if (paging instanceof Response) return paging
+  const search = parseSearch(query)
+  if (search instanceof Response) return search
   const envelope = listPublicProjects(state, {
     page: paging.page,
     pageSize: paging.pageSize,
-    search: query.get('search') ?? undefined,
+    search,
     technology: queryList(query, 'technology'),
     progress: queryEnum(query, 'progress', PROGRESSES),
     sort: queryEnum(query, 'sort', ['recent', 'stars'] as const),
   })
-  if (beyondLastPage(paging.page, envelope.totalPages)) {
-    return pageOutOfRange(envelope.totalPages)
-  }
   return ok(envelope)
 }
 
@@ -403,17 +408,16 @@ function handleAdmin(req: MockRequest): Response {
     if (method === 'GET') {
       const paging = parsePage(query)
       if (paging instanceof Response) return paging
+      const search = parseSearch(query)
+      if (search instanceof Response) return search
       const envelope = listAdminProjects(state, {
         page: paging.page,
         pageSize: paging.pageSize,
         publish_status: queryEnum(query, 'publish_status', PUBLISH_STATUSES),
         progress: queryEnum(query, 'progress', PROGRESSES),
-        search: query.get('search') ?? undefined,
+        search,
         includeDeleted: queryBool(query, 'includeDeleted'),
       })
-      if (beyondLastPage(paging.page, envelope.totalPages)) {
-        return pageOutOfRange(envelope.totalPages)
-      }
       return ok(envelope)
     }
     if (method === 'POST') {
@@ -519,6 +523,8 @@ function handleAdmin(req: MockRequest): Response {
     if (method === 'GET') {
       const paging = parsePage(query)
       if (paging instanceof Response) return paging
+      const search = parseSearch(query)
+      if (search instanceof Response) return search
       const envelope = listAdminNotes(state, {
         page: paging.page,
         pageSize: paging.pageSize,
@@ -526,9 +532,6 @@ function handleAdmin(req: MockRequest): Response {
         publish_status: queryEnum(query, 'publish_status', NOTE_STATUSES),
         search: query.get('search') ?? undefined,
       })
-      if (beyondLastPage(paging.page, envelope.totalPages)) {
-        return pageOutOfRange(envelope.totalPages)
-      }
       return ok(envelope)
     }
     if (method === 'POST') {
@@ -596,15 +599,14 @@ export function handleMockRequest(req: MockRequest): Response {
   if (method === 'GET' && path === '/notes') {
     const paging = parsePage(req.query)
     if (paging instanceof Response) return paging
+    const search = parseSearch(req.query)
+    if (search instanceof Response) return search
     const envelope = listPublicNotes(state, {
       page: paging.page,
       pageSize: paging.pageSize,
-      search: req.query.get('search') ?? undefined,
+      search,
       tag: req.query.get('tag') ?? undefined,
     })
-    if (beyondLastPage(paging.page, envelope.totalPages)) {
-      return pageOutOfRange(envelope.totalPages)
-    }
     return ok(envelope)
   }
   const publicNote = matchRoute('/notes/:slug', path)
