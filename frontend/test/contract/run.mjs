@@ -78,8 +78,10 @@ function check(name, cond, extra) {
  *
  * 行的 satisfied 记的是「契约是否已满足」：真实后端为 false（红行 + TODO），mock 侧已满足则为 true，
  * `--source both` 会把这种差异作为「已知分叉」单独列出，而不是混进失败。
+ *
+ * v1.2.3 之后本表已无 TODO 行（后端已合），保留此函数供下一次契约先行、实现滞后的场景使用。
  */
-function pendingBackend(name, currentHolds, contractHolds, todo, extra) {
+export function pendingBackend(name, currentHolds, contractHolds, todo, extra) {
   const note = String(JSON.stringify(extra) ?? '').slice(0, 200)
   if (!contractHolds && !currentHolds) {
     // 现状既不是旧行为也不符合契约：这不是「等后端」，是有人改坏了
@@ -306,24 +308,18 @@ check('分页第二页', page2.json?.items?.length === 1 && page2.json.page === 
   const pctProject = await createProject(slugOf('pct-literal'), { name: `100%覆盖 ${RUN}` })
   await setStatus(pctProject.id, 'published')
   const pct = await api('GET', `/projects?search=${encodeURIComponent('%')}`)
-  pendingBackend(
+  check(
     'search=% 按字面量匹配（只命中名字里有 % 的）',
-    // 现状（未转义）：% 当通配符，等于「匹配全部」
-    pct.json?.items?.length === pct.json?.total,
     pct.json?.items?.length === 1 && pct.json.items[0].slug === slugOf('pct-literal'),
-    'backend:fix/v1.2-review',
     pct.json?.items?.map((i) => i.slug),
   )
 
   const underscoreProject = await createProject(slugOf('underscore-literal'), { name: `snake_case_tool ${RUN}` })
   await setStatus(underscoreProject.id, 'published')
   const underscore = await api('GET', `/projects?search=${encodeURIComponent('_')}`)
-  pendingBackend(
+  check(
     'search=_ 按字面量匹配（不是单字符通配）',
-    // 现状（未转义）：_ 当单字符通配，命中几乎所有名字（≥ 项目总数）
-    (underscore.json?.items?.length ?? 0) >= (pct.json?.total ?? 0),
     underscore.json?.items?.length === 1 && underscore.json.items[0].slug === slugOf('underscore-literal'),
-    'backend:fix/v1.2-review',
     underscore.json?.items?.map((i) => i.slug),
   )
 
@@ -425,24 +421,20 @@ check(
   notes.json?.items?.every((i) => 'project' in i && Array.isArray(i.tags) && 'published_at' in i),
   notes.json?.items?.[0],
 )
-pendingBackend(
-  '列表项带 excerpt（契约 v1.2.3）',
-  notes.json?.items?.every((i) => !('excerpt' in i)),
+check(
+  '列表项带 excerpt（契约 v1.2.3：三条路径都带）',
   notes.json?.items?.every((i) => 'excerpt' in i),
-  'backend:excerpt',
   Object.keys(notes.json?.items?.[0] ?? {}),
 )
 check('列表按 published_at 倒序', notes.json?.items?.[0]?.slug === slugOf('note-2'), notes.json?.items?.map((i) => i.slug))
 check('pageSize=100 被接受', notes.json?.pageSize === 100, notes.json?.pageSize)
-pendingBackend(
+check(
   'excerpt 去 Markdown 且不超过 121 字',
-  notes.json?.items?.every((i) => !('excerpt' in i)),
   notes.json?.items?.every(
     (i) =>
       'excerpt' in i &&
       (i.excerpt === null || (String(i.excerpt).length <= 121 && !String(i.excerpt).includes('##'))),
   ),
-  'backend:excerpt',
   notes.json?.items?.map((i) => i.excerpt),
 )
 
@@ -456,11 +448,11 @@ const longNote = await api('POST', '/admin/notes', {
 })
 check('长正文笔记创建 201', longNote.status === 201, longNote.status)
 const longDetail = await api('GET', `/notes/${slugOf('note-long')}`)
-pendingBackend(
+check(
   '长正文 excerpt 截到 120 字 + 省略号',
-  longDetail.json?.excerpt === undefined,
-  typeof longDetail.json?.excerpt === 'string' && longDetail.json.excerpt.length === 121 && longDetail.json.excerpt.endsWith('…'),
-  'backend:excerpt',
+  typeof longDetail.json?.excerpt === 'string' &&
+    longDetail.json.excerpt.length === 121 &&
+    longDetail.json.excerpt.endsWith('…'),
   longDetail.json?.excerpt?.length,
 )
 
@@ -474,13 +466,7 @@ const emptyNote = await api('POST', '/admin/notes', {
 check('空正文笔记创建结果符合契约（201 或 400）', [201, 400].includes(emptyNote.status), emptyNote.status)
 if (emptyNote.status === 201) {
   const emptyDetail = await api('GET', `/notes/${slugOf('note-empty')}`)
-  pendingBackend(
-    '空正文 excerpt 为 null',
-    emptyDetail.json?.excerpt === undefined,
-    emptyDetail.json?.excerpt === null,
-    'backend:excerpt',
-    emptyDetail.json?.excerpt,
-  )
+  check('空正文 excerpt 为 null', emptyDetail.json?.excerpt === null, emptyDetail.json?.excerpt)
 }
 
 const noteSearch = await api('GET', `/notes?search=${encodeURIComponent('正文二')}`)

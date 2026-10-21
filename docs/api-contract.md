@@ -215,6 +215,7 @@ draft ──publish──▶ published ──archive──▶ archived
     {
       "id": "n1", "slug": "note-1", "title": "复盘",
       "project": { "slug": "portfolio-platform", "name": "项目展示平台" },
+      "excerpt": "这次把列表重写成 URL 查询为唯一真源…",
       "tags": ["复盘"], "published_at": "2026-09-10T00:00:00.000Z",
       "excerpt": "这次把做过的项目收拢成一页一页……",
       "created_at": "2026-09-09T00:00:00.000Z", "updated_at": "2026-09-10T00:00:00.000Z"
@@ -232,11 +233,13 @@ draft ──publish──▶ published ──archive──▶ archived
 
 | 参数 | 说明 |
 |---|---|
-| `search` | 匹配 `title` / `body_md` |
+| `search` | 匹配 `title` / `body_md`，**按字面量**（`%` / `_` 不是通配符，见 3.7） |
 | `tag` | 标签精确匹配 |
 | `page` / `pageSize` | 分页 |
 
 `items[]` 为 `NoteSummary`（同上 `notes` 元素结构，含 `excerpt`，见 1.4 第 3 条），按 `published_at` 倒序（空值再按 `created_at` 倒序）。
+
+`excerpt` 的定义与「必带、详情不开口子」的口径以 **1.4 第 3 条为唯一出处**（本处只提示：列表页据此渲染摘要，勿在页面里自行截断原文）。
 
 > 分组口径：F4 的「左栏按项目分组」由前端在已取回的列表上分组，本接口**不提供**分组聚合或 `project` 过滤参数。
 > 笔记量级小（个人站），前端用 `pageSize=100` 一次取全后分组；跨页分组的语义不在本契约内。
@@ -256,12 +259,25 @@ draft ──publish──▶ published ──archive──▶ archived
 ```
 
 只汇总**前台可见项目**的技术栈名（去重升序），前台筛选下拉与后台编辑器共用。
+该接口不接收 `search`，不涉及通配符转义。
 
 ### 3.6 `GET /health`
 
 ```json
 { "status": "ok", "uptime": 12.3 }
 ```
+
+### 3.7 `search` 的匹配语义（通则）
+
+`search` 一律**按字面量**匹配子串：SQL 的 `%` 与 `_` 是 LIKE 通配符，实现必须转义（`ESCAPE '\\'`）
+或在应用层比较，否则用户搜「100%」「a_b」会命中无关记录。大小写不敏感的实现细节不属于契约（SQLite `LIKE` 对 ASCII 天然如此）。
+
+| 端点 | 状态 |
+|---|---|
+| `GET /projects` | ✅ 已按字面量（应用层比较，见 `backend/src/routes/projects.ts`） |
+| `GET /notes` | ✅ 已按字面量（`ESCAPE '\\'` + id 集合，见 `backend/src/routes/notes.ts`） |
+| `GET /technologies` | — 不接收 `search` |
+| `GET /admin/projects`、`GET /admin/notes` | ⚠️ 仍走未转义的 SQL `LIKE`：v1.2.3 批次文件范围锁定在前台三个路由，这两个留待下一批（与前台同规则，不得各自定义语义） |
 
 ## 4. 后台接口（`/api/v1/admin/**`，需 Bearer）
 
