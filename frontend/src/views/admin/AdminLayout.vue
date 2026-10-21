@@ -22,6 +22,7 @@ function onLogout() {
       <nav class="nav" aria-label="后台导航">
         <RouterLink class="nav-link" :to="{ name: 'admin-projects' }">项目列表</RouterLink>
         <RouterLink class="nav-link" :to="{ name: 'admin-project-new' }">新建项目</RouterLink>
+        <RouterLink class="nav-link" :to="{ name: 'admin-note-new' }">新建笔记</RouterLink>
       </nav>
 
       <div class="sidebar-footer">
