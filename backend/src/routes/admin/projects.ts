@@ -14,6 +14,7 @@ import { prisma } from "../../lib/prisma.js";
 import { AppError } from "../../lib/errors.js";
 import { validate } from "../../lib/zod.js";
 import { recordSlugAlias } from "../../lib/slug.js";
+import { likePattern } from "../../lib/like.js";
 import {
   adminProjectDetailInclude,
   adminProjectListInclude,
@@ -68,21 +69,27 @@ async function assertSlugFree(slug: string, excludeId?: string): Promise<void> {
   }
 }
 
+// 命中的项目 id（name/summary/slug 包含关键字，字面量匹配）。
+// Prisma 的 `contains` 编译成不带 ESCAPE 的 LIKE，搜「100%」会命中全库；这里先转义再走 `ESCAPE '\'`，
+// 只取 id 集合（过滤/计数仍然交给 Prisma，与前台笔记同一手法）。
+async function searchProjectIds(term: string): Promise<string[]> {
+  const pattern = likePattern(term);
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM projects
+    WHERE name LIKE ${pattern} ESCAPE '\\'
+       OR summary LIKE ${pattern} ESCAPE '\\'
+       OR slug LIKE ${pattern} ESCAPE '\\'
+  `;
+  return rows.map((r) => r.id);
+}
+
 export async function adminProjectRoutes(app: FastifyInstance) {
   app.get("/projects", async (req) => {
     const q = validate(AdminProjectListQuerySchema, req.query);
     // 分段计数口径（B9）：search + includeDeleted 过滤后、publish_status 过滤前的集合
     const baseWhere: Prisma.ProjectWhereInput = {
       ...(q.includeDeleted ? {} : { deleted_at: null }),
-      ...(q.search
-        ? {
-            OR: [
-              { name: { contains: q.search } },
-              { summary: { contains: q.search } },
-              { slug: { contains: q.search } },
-            ],
-          }
-        : {}),
+      ...(q.search ? { id: { in: await searchProjectIds(q.search) } } : {}),
     };
     const where: Prisma.ProjectWhereInput = {
       ...baseWhere,
