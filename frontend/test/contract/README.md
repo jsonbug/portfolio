@@ -68,6 +68,8 @@ npm run contract -- --source both       # 双向：同一张表两遍 + 逐行 d
 - **收尾与开头的清场同源**：CLI 在 `try/finally` 里再调一次 `cleanupRunProjects()`，脚本自己建的 `RUN-` 项目自己收，
   不让本机库无限累积测试项目；断言失败、抛错、mock 侧取数失败都走同一条 finally。
 - 表外抽样（不在 15 行对照表内，防「只对快照不对行为」）：`search` 超 200 字 → 400、`search=%` / `search=_` 字面量匹配、`stars` 同分回 `recent`、笔记 >100 篇（pageSize 上限 100 + 真实 `total`）。
+- 后台列表项的**键集合**由一行断言固定（契约 §4.1，含 `note_count`）：mock 少一个字段、真后端多一个字段都会红。
+- 后台 320 宽专项**不在本表范围**：`docs/frontend-gap-v1.2.md` 要求的最小宽是 768，320 属范围外，不为它单开用例（列优先级表从 768 往下不再给断点）。
 - 公开项目详情**没有** `publish_status`，这是契约决定（可见性过滤后只剩 `published`，放开等于让前台表达它不该知道的状态）；所以详情页元数据里「发布状态」固定渲染「已发布」，归档项目的真实状态只属于后台。
 - mock 侧同口径另有 `frontend/src/mocks/handlers.spec.ts` 单测；「两边同构」由 `--source both` 每次现场比对，不靠这句话担保。
 - `src/mocks/contract-bridge.spec.ts` 断言 **所有行在 mock 侧必须 satisfied**；`--source both` 也断言两侧都只有 `must` 行。

@@ -49,6 +49,8 @@ export interface AdminProjectListItem extends ProjectListItem {
   publish_status: PublishStatus
   published_at: string | null
   deleted_at: string | null
+  /** 该项目全部笔记数（草稿 + 已发布），与 search / publish_status 过滤无关。 */
+  note_count: number
 }
 
 /** 后台项目详情：含草稿笔记与封面原图。 */
