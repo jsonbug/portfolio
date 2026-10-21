@@ -655,6 +655,14 @@ onMounted(() => void load())
           <li v-for="note in notes" :key="note.id" class="note-item">
             <span class="note-title">{{ note.title }}</span>
             <span class="note-meta">{{ note.publish_status === 'published' ? '已发布' : '草稿' }}</span>
+            <!-- 批乙：笔记行带「编辑」入口（03 稿标题区的编辑入口，项目侧先给这条路径） -->
+            <RouterLink
+              :to="`/admin/notes/${note.id}`"
+              class="note-edit"
+              :aria-label="`编辑笔记：${note.title}`"
+            >
+              编辑
+            </RouterLink>
           </li>
         </ul>
       </section>
@@ -823,6 +831,15 @@ onMounted(() => void load())
   background: var(--c-fill);
   border-radius: var(--r-control);
   font-size: 14px;
+}
+.note-edit {
+  margin-left: auto;
+  color: var(--c-primary-strong);
+  font-size: 13px;
+  min-height: var(--touch-min);
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--sp-1);
 }
 .note-meta {
   color: var(--c-text-secondary);

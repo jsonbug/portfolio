@@ -99,7 +99,7 @@ describe('ProjectListView', () => {
 
     const row = await findRow('项目展示平台')
     expect(within(row).getByText('/projects/portfolio-platform')).toBeInTheDocument()
-    expect(within(row).getByRole('link', { name: '仓库（新窗口打开）' })).toBeInTheDocument()
+    expect(within(row).getByRole('link', { name: '源码仓库（新窗口打开）' })).toBeInTheDocument()
     expect(within(row).getByRole('link', { name: '官网（新窗口打开）' })).toBeInTheDocument()
   })
 
@@ -150,7 +150,7 @@ describe('ProjectListView', () => {
     expect(failed).toBeInTheDocument()
 
     const portfolio = await findRow('项目展示平台')
-    const okEntry = within(portfolio).getByRole('link', { name: '仓库（新窗口打开）' })
+    const okEntry = within(portfolio).getByRole('link', { name: '源码仓库（新窗口打开）' })
     expect(okEntry.className).not.toContain('entry--failed')
   })
 

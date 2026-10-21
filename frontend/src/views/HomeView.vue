@@ -42,6 +42,18 @@ onMounted(async () => {
 
 const filtered = computed(() => !isDefaultFilters(filters.value))
 
+/**
+ * 英雄区三格统计（01 稿）：总数 / 进行中 / 已上线。
+ *
+ * 数字来自列表响应的 `counts`（契约 §3.1：counts 在 search+technology 之后、progress 之前算），
+ * 所以切分段时三格不动，只有搜索与技术栈会让它们一起变——正是稿上的语义。
+ */
+const heroStats = computed(() => [
+  { key: 'all', label: '全部项目', value: counts.value.all },
+  { key: 'ongoing', label: '进行中', value: counts.value.ongoing },
+  { key: 'launched', label: '已上线', value: counts.value.launched },
+])
+
 /** 页头汇总里的「最近更新」：取当前结果集里最新的一次更新。 */
 const recentText = computed(() => {
   const stamps = items.value
@@ -115,12 +127,21 @@ function clearFilters(): void {
 <template>
   <main class="home page">
     <header class="home-header">
-      <h1 class="type-display">项目</h1>
-      <p v-if="!showSkeleton && total > 0" class="home-summary">
-        <span class="tabular-nums">{{ total }} 个项目</span>
-        <span v-if="recentText" aria-hidden="true"> · </span>
-        <span v-if="recentText">{{ recentText }}</span>
-      </p>
+      <div class="home-title">
+        <h1 class="type-display">项目</h1>
+        <p v-if="!showSkeleton && total > 0" class="home-summary">
+          <span class="tabular-nums">{{ total }} 个项目</span>
+          <span v-if="recentText" aria-hidden="true"> · </span>
+          <span v-if="recentText">{{ recentText }}</span>
+        </p>
+      </div>
+      <!-- 01 稿：英雄区三格统计，数字直接取列表 counts，不额外发请求 -->
+      <dl v-if="!showSkeleton && total > 0" class="home-stats">
+        <div v-for="stat in heroStats" :key="stat.key" class="home-stat">
+          <dt class="type-small">{{ stat.label }}</dt>
+          <dd class="tabular-nums">{{ stat.value }}</dd>
+        </div>
+      </dl>
     </header>
 
     <ProjectFilterBar
@@ -164,9 +185,46 @@ function clearFilters(): void {
 <style scoped>
 .home-header {
   display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-24);
+  margin-bottom: var(--space-24);
+}
+.home-title {
+  display: flex;
   flex-direction: column;
   gap: var(--space-8);
-  margin-bottom: var(--space-24);
+}
+.home-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(88px, auto));
+  gap: var(--space-24);
+  margin: 0;
+  text-align: right;
+}
+.home-stat {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+}
+.home-stat dt {
+  color: var(--c-text-secondary);
+}
+.home-stat dd {
+  margin: 0;
+  font-size: var(--fs-h2);
+  line-height: var(--lh-h2);
+  font-weight: var(--fw-semibold);
+  color: var(--c-ink);
+}
+@media (max-width: 767px) {
+  .home-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .home-stats {
+    text-align: left;
+  }
 }
 .home-header h1 {
   margin: 0;
