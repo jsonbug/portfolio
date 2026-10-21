@@ -10,6 +10,7 @@ function renderDetail(slug: string) {
     routes: [
       { path: '/', name: 'home', component: { template: '<div>home</div>' } },
       { path: '/projects/:slug', name: 'project-detail', component: ProjectDetailView, props: true },
+      { path: '/notes/:slug', name: 'note-detail', component: { template: '<div>note</div>' } },
     ],
   })
   return render(ProjectDetailView, { props: { slug }, global: { plugins: [router] } })

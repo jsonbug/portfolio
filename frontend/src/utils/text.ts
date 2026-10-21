@@ -33,3 +33,16 @@ export function daysAgo(iso: string | null, now: number = Date.now()): number | 
   if (Number.isNaN(time)) return null
   return Math.max(0, Math.floor((now - time) / 86_400_000))
 }
+
+/**
+ * 粗估阅读时长（分钟）：中文按字、英文按词，300 单位/分钟取整，至少 1 分钟。
+ *
+ * 只用于笔记页的「阅读时长」提示，不必精确。
+ */
+export function readingTimeMinutes(text: string): number {
+  const cjk = (text.match(/[\u4e00-\u9fff]/g) ?? []).length
+  const words = (text.replace(/[\u4e00-\u9fff]/g, ' ').match(/[a-zA-Z0-9]+/g) ?? []).length
+  const units = cjk + words
+  if (units === 0) return 0
+  return Math.max(1, Math.round(units / 300))
+}

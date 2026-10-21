@@ -16,6 +16,17 @@ const router = createRouter({
       props: true,
     },
     {
+      path: '/notes',
+      name: 'notes',
+      component: () => import('@/views/NotesView.vue'),
+    },
+    {
+      path: '/notes/:slug',
+      name: 'note-detail',
+      component: () => import('@/views/NoteDetailView.vue'),
+      props: true,
+    },
+    {
       path: '/admin/login',
       name: 'admin-login',
       component: () => import('@/views/admin/LoginView.vue'),
