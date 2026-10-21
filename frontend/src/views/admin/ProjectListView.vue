@@ -14,8 +14,19 @@ import AppBadge from '@/components/AppBadge.vue'
 import ProjectCover from '@/components/ProjectCover.vue'
 import ProgressBadge from '@/components/ProgressBadge.vue'
 import PublishStatusBadge from '@/components/PublishStatusBadge.vue'
+import { useViewportWidth } from '@/composables/useViewportWidth'
+import { visibleColumns, type ProjectColumnKey } from './projectColumns'
 
 const router = useRouter()
+
+// 列可见性完全由 projectColumns.ts 的优先级表 + 当前视口宽度决定。
+const { width: viewportWidth } = useViewportWidth()
+const columns = computed(() => visibleColumns(viewportWidth.value))
+const visibleKeys = computed(() => new Set<ProjectColumnKey>(columns.value.map((col) => col.key)))
+
+function isVisible(key: ProjectColumnKey): boolean {
+  return visibleKeys.value.has(key)
+}
 
 const items = ref<AdminProjectListItem[]>([])
 const counts = ref({ all: 0, draft: 0, published: 0, archived: 0 })
@@ -171,13 +182,14 @@ onMounted(() => void load())
                 @change="toggleSelectAll"
               />
             </th>
-            <th class="col-name">名称</th>
-            <th class="col-slug">slug</th>
-            <th class="col-status">发布状态</th>
-            <th class="col-progress">进展</th>
-            <th class="col-links">链接</th>
-            <th class="col-updated">更新时间</th>
-            <th class="col-actions">操作</th>
+            <th
+              v-for="column in columns"
+              :key="column.key"
+              :class="column.className"
+              :data-column="column.key"
+            >
+              {{ column.label }}
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -190,7 +202,7 @@ onMounted(() => void load())
                 @change="toggleSelect(item.id)"
               />
             </td>
-            <td class="col-name">
+            <td v-if="isVisible('name')" class="col-name">
               <div class="project-cell">
                 <div class="thumb">
                   <ProjectCover :name="item.name" :cover-image="item.cover_image_url" variant="thumb" />
@@ -209,16 +221,16 @@ onMounted(() => void load())
                 </div>
               </div>
             </td>
-            <td class="col-slug">
+            <td v-if="isVisible('slug')" class="col-slug">
               <code class="slug">{{ item.slug }}</code>
             </td>
-            <td class="col-status">
+            <td v-if="isVisible('publish_status')" class="col-status">
               <PublishStatusBadge :status="item.publish_status" />
             </td>
-            <td class="col-progress">
+            <td v-if="isVisible('progress')" class="col-progress">
               <ProgressBadge :progress="item.progress" />
             </td>
-            <td class="col-links">
+            <td v-if="isVisible('links')" class="col-links">
               <span class="entries">
                 <template v-for="link in entryLinks(item)" :key="link.id">
                   <a
@@ -241,10 +253,10 @@ onMounted(() => void load())
                 <span v-if="!entryLinks(item).length" class="muted">—</span>
               </span>
             </td>
-            <td class="col-updated">
+            <td v-if="isVisible('updated_at')" class="col-updated">
               <span class="tabular-nums">{{ formatDate(item.updated_at) }}</span>
             </td>
-            <td class="col-actions">
+            <td v-if="isVisible('actions')" class="col-actions">
               <div class="actions">
                 <button class="btn btn-sm btn-ghost" type="button" @click="edit(item.id)">编辑</button>
                 <template v-if="!isDeleted(item)">
@@ -521,26 +533,6 @@ onMounted(() => void load())
   font-size: 13px;
 }
 
-/* 隐列顺序（gap §四）：从右往左 操作 → 更新时间 → 进展 → slug；
-   名称 / 发布状态 / 链接任何宽度都不隐藏，最小 768（<768 不做适配，横向滚动）。 */
-@media (max-width: 1279px) {
-  .col-actions {
-    display: none;
-  }
-}
-@media (max-width: 1119px) {
-  .col-updated {
-    display: none;
-  }
-}
-@media (max-width: 959px) {
-  .col-progress {
-    display: none;
-  }
-}
-@media (max-width: 839px) {
-  .col-slug {
-    display: none;
-  }
-}
+/* 隐列不再写 media query：可见性来自 projectColumns.ts 的优先级表（minWidth），
+   从右往左依次隐藏（操作 → 更新时间 → 进展 → slug），名称/发布状态/链接恒显。 */
 </style>
