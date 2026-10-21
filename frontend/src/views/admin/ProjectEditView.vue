@@ -74,8 +74,9 @@ async function load() {
     meta.stars = d.stars
     meta.role = d.role ?? ''
     meta.projectStatus = d.projectStatus ?? ''
-    meta.startDate = d.startDate ?? ''
-    meta.endDate = d.endDate ?? ''
+    // <input type="date"> 只认 YYYY-MM-DD，后端可能返回完整 ISO 时间戳。
+    meta.startDate = d.startDate ? d.startDate.slice(0, 10) : ''
+    meta.endDate = d.endDate ? d.endDate.slice(0, 10) : ''
     meta.githubRepo = d.githubRepo ?? ''
     meta.coverImage = d.coverImage ?? ''
     techInput.value = d.technologies.join(', ')

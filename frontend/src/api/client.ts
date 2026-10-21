@@ -94,9 +94,12 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   // 自动附带登录 token（后台路由校验 Bearer；公开路由会忽略该头）。
   const token = getAuthToken()
+  // Content-Type 仅在带 body 时设置：无 body 请求（DELETE/restore 等）带上
+  // application/json 会被后端 JSON 解析器判为「空 body + json 头」而 400。
+  const hasBody = init.body !== undefined && init.body !== null
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    'Content-Type': 'application/json',
+    ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(init.headers as Record<string, string> | undefined),
   }
