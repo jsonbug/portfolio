@@ -179,6 +179,19 @@ docker compose exec web tail -f /var/log/nginx/access.log
 
 - **密钥不进镜像**：`AUTH_SECRET` / `ADMIN_PASSWORD_HASH` 只在运行时经 `env_file` 注入；镜像层与 Dockerfile 中无任何密钥，`.env` 已被 `.gitignore` 忽略。
 - **非 root 运行**：api 容器以 `node`(uid 1000) 运行，`/data` 属主为 `node`。
+- **登录边缘限流（防公网暴力破解）**：限流在 nginx 做，后端不记帐、契约不加字段。
+  `nginx.conf` 的 `http` 块：`limit_req_zone $binary_remote_addr zone=login_zone:10m rate=5r/m;`，
+  只挂在 `location = /api/v1/auth/login` 这个**精确匹配**上（`burst=4 nodelay`、`limit_req_status 429`），
+  其它 API、静态资源与 SPA 回退都不受限。
+
+  - 语义：nginx 的可放行总数 = `burst + 1`（首请求走 `rate`，其后每个突发占 1 格），所以 `rate=5r/m` + `burst=4`
+    = **一分钟内连错 5 次仍 401，第 6 次 429**；之后每 12 秒回填 1 个令牌，不是永久封禁。
+  - 被限时返回的是 nginx 的 HTML `429`（**不是**契约错误信封，也没有 `error.code`）：前端只按状态码提示
+    「尝试次数过多，请稍后再试」。**不实现「剩余 N 次尝试」**——边缘限流拿不到这个数，且不向未认证方暴露尝试状态。
+  - 管理员自己把自己锁在外面时：等 1 分钟自然恢复，或 `docker compose restart web` 清空令牌桶（进程重启才会重建共享内存区，
+    `nginx -s reload` 不会）。
+  - 调紧/调松只改 `nginx.conf` 两处（`rate` 与 `burst`）后重建 web 镜像；冒烟脚本会连带核这条（连错 6 次的
+    状态序列必须是 `401×5 → 429`，且桶空时 `/api/v1/health` 仍 200，证明限流没有洩到其它接口）。
 - **compose 的 `variable is not set` 警告**：`ADMIN_PASSWORD_HASH` 形如 `scrypt$<salt>$<hash>`，compose 会把它当变量插值（把 `$fc18…` 替换成空串，导致登录永远 401）。因此 `docker-compose.yml` 使用了 `env_file: { path: .env, format: raw }` 原样注入。compose 读取 `.env` 作为项目环境时仍会打印该警告，**属无害噪音**，可用下面的命令确认容器内取值与 `.env` 完全一致：
 
   ```bash
@@ -250,7 +263,7 @@ ADMIN_PASSWORD='你的强口令' node scripts/smoke-compose.mjs --base http://lo
 ADMIN_PASSWORD='你的强口令' node scripts/smoke-compose.mjs --public      # 额外做一次真实外网链接重检
 ```
 
-覆盖：nginx 静态托管与 `/projects`、`/admin/*` 的 history fallback → `/api/v1` 同源反代（含 `Authorization` 透传）→ 登录 / 401 → 建草稿项目（含链接与笔记）→ 草稿对前台**不可见**（先造一个已发布项目保证列表非空，再断否定命题）→ 发布后列表/详情/笔记可见（含 `excerpt` 正向前断）→ 技术栈过滤、进展分段过滤、`sort=recent` 降序（断内容而非只断 200）→ 后台分段计数与过滤、后台笔记状态 → 元数据 KV 与截图（断内容）→ 软删/恢复/`includeDeleted` → 契约错误信封（`VALIDATION_ERROR` / `INVALID_STATUS_TRANSITION`）与状态机。
+覆盖：nginx 静态托管与 `/projects`、`/admin/*` 的 history fallback → `/api/v1` 同源反代（含 `Authorization` 透传）→ 登录 / 401 → 登录边缘限流（连错 5 次仍 401、第 6 次被 nginx 挡成 429、桶空时 `/api/v1/health` 仍 200）→ 建草稿项目（含链接与笔记）→ 草稿对前台**不可见**（先造一个已发布项目保证列表非空，再断否定命题）→ 发布后列表/详情/笔记可见（含 `excerpt` 正向前断）→ 技术栈过滤、进展分段过滤、`sort=recent` 降序（断内容而非只断 200）→ 后台分段计数与过滤、后台笔记状态 → 元数据 KV 与截图（断内容）→ 软删/恢复/`includeDeleted` → 契约错误信封（`VALIDATION_ERROR` / `INVALID_STATUS_TRANSITION`）与状态机。
 
 关于外网：脚本**自己**不发任何外网请求，但后端「建链接时自动检查」默认开启（`backend/src/lib/link-check.ts:251`，`NODE_ENV=test` 或 `LINK_CHECK_ENABLED=0` 关闭），所以**起栈时要显式 `LINK_CHECK_ENABLED=0`**——否则建链接那一刻后端会真的去连一次外网，在受限网络里把该链接记成 `failed`（不影响判定，但库里留脏状态）。`--public` 是唯一显式要求出网的分支。
 
