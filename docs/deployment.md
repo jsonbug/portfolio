@@ -192,6 +192,10 @@ docker compose exec web tail -f /var/log/nginx/access.log
     `nginx -s reload` 不会）。
   - 调紧/调松只改 `nginx.conf` 两处（`rate` 与 `burst`）后重建 web 镜像；冒烟脚本会连带核这条（连错 6 次的
     状态序列必须是 `401×5 → 429`，且桶空时 `/api/v1/health` 仍 200，证明限流没有洩到其它接口）。
+  - **前置反代会改变限流的「谁」**：key 是 `$binary_remote_addr`，即「谁连 nginx」。一旦按 §10 挂了 Caddy/nginx TLS 反代，
+    key 就退化为反代自己的 IP，限流退化成「全站共用一个桶」（单管理员能接受，但要知道）。要按真实客户端限流，
+    得配 `ngx_http_realip_module`：`set_real_ip_from <反代地址>; real_ip_header X-Forwarded-For; real_ip_recursive on;`
+    ——且只可信前置反代的地址，否则伪造 `X-Forwarded-For` 就能绕过限流。
 - **compose 的 `variable is not set` 警告**：`ADMIN_PASSWORD_HASH` 形如 `scrypt$<salt>$<hash>`，compose 会把它当变量插值（把 `$fc18…` 替换成空串，导致登录永远 401）。因此 `docker-compose.yml` 使用了 `env_file: { path: .env, format: raw }` 原样注入。compose 读取 `.env` 作为项目环境时仍会打印该警告，**属无害噪音**，可用下面的命令确认容器内取值与 `.env` 完全一致：
 
   ```bash
