@@ -48,7 +48,10 @@ async function api(method, path, body) {
 }
 
 const failures = []
-const gaps = []
+/** 带 TODO(backend:…) 标注、后端尚未合的行（不阻断退出码，但必须一眼可见）。 */
+const pending = []
+/** 后端已修、标注该删的行。 */
+const todoDone = []
 
 /** 契约必须满足；失败即退出码 1。 */
 function check(name, cond, extra) {
@@ -56,10 +59,27 @@ function check(name, cond, extra) {
   if (!cond) failures.push(name)
 }
 
-/** 已知后端缺口：默认只告警（--strict 时算失败）。 */
-function knownGap(name, cond, extra) {
-  console.log(`  ${cond ? '✓' : '⚠'} ${name}${cond ? '' : ` — 已知缺口：${JSON.stringify(extra)?.slice(0, 200)}`}`)
-  if (!cond) gaps.push(name)
+/**
+ * 契约已定、后端还没合的行：**显式标注**，断言「当前真实行为」，不静默放行、也不从表里删。
+ *
+ * 约定（审查官一眼分清责任）：
+ *   ✓            后端已符合契约 → 把该行改成 check() 并删掉标注
+ *   ✗ + TODO(…)  红行 = 后端还没合（不阻断退出码）
+ *   ✗✗           现状既不是旧行为也不符合契约 → 立刻查
+ */
+function pendingBackend(name, currentHolds, contractHolds, todo, extra) {
+  if (contractHolds) {
+    console.log(`  ✓ ${name}（后端已修，删掉本行 TODO 标注即可）`)
+    todoDone.push(name)
+    return
+  }
+  if (currentHolds) {
+    console.log(`  ✗ ${name} — TODO(${todo}) 现状：${JSON.stringify(extra)?.slice(0, 200)}`)
+    pending.push(`${name} [${todo}]`)
+    return
+  }
+  console.log(`  ✗✗ ${name} — 现状既不是旧行为也不符合契约：${JSON.stringify(extra)?.slice(0, 200)}`)
+  failures.push(name)
 }
 
 function section(title) {
@@ -204,20 +224,80 @@ check(
 
 const page2 = await api('GET', '/projects?page=2&pageSize=2')
 check('分页第二页', page2.json?.items?.length === 1 && page2.json.page === 2, page2.json?.items?.map((i) => i.slug))
-knownGap(
-  '分页越界返回 400（契约：page > totalPages 一律 400）',
-  (
-    await api('GET', '/projects?page=99')
-  ).status === 400,
-  (await api('GET', '/projects?page=99')).status,
-)
-knownGap(
-  'search 里的 % 按字面量匹配（未转义）',
-  (
-    await api('GET', '/projects?search=%25')
-  ).json?.items?.length === 0,
-  (await api('GET', '/projects?search=%25')).json?.items?.length,
-)
+{
+  // 契约 1 拆两类：参数非法 400；语义越界（page > totalPages）200 + 空 items + 真实 total/totalPages
+  const beyond = await api('GET', '/projects?page=99')
+  check('语义越界返回 200（参数合法，只是没数据）', beyond.status === 200, beyond.status)
+  check('语义越界 items 为空', Array.isArray(beyond.json?.items) && beyond.json.items.length === 0, beyond.json?.items?.length)
+  check(
+    '语义越界仍给真实 total / totalPages',
+    beyond.json?.total === all.json?.total && beyond.json?.totalPages === all.json?.totalPages,
+    [beyond.json?.total, beyond.json?.totalPages],
+  )
+  const badParam = await api('GET', '/projects?page=0')
+  check('参数非法返回 400', badParam.status === 400, badParam.status)
+  check('参数非法信封是 VALIDATION_ERROR', badParam.json?.error?.code === 'VALIDATION_ERROR', badParam.json?.error?.code)
+}
+// 表外抽样 0：search 超长按参数错误拒（与前端 clampSearch 上限 200 对齐）
+{
+  const tooLong = await api('GET', `/projects?search=${'a'.repeat(201)}`)
+  check('search 超过 200 字返回 400', tooLong.status === 400, tooLong.status)
+  const exact = await api('GET', `/projects?search=${'a'.repeat(200)}`)
+  check('search 正好 200 字被接受', exact.status === 200, exact.status)
+}
+
+// 表外抽样 1：LIKE 通配符必须按字面量匹配（% 与 _ 都要，后端 fix/v1.2-review 未合）
+{
+  const pctProject = await createProject(slugOf('pct-literal'), { name: `100%覆盖 ${RUN}` })
+  await setStatus(pctProject.id, 'published')
+  const pct = await api('GET', `/projects?search=${encodeURIComponent('%')}`)
+  pendingBackend(
+    'search=% 按字面量匹配（只命中名字里有 % 的）',
+    // 现状（未转义）：% 当通配符，等于「匹配全部」
+    pct.json?.items?.length === pct.json?.total,
+    pct.json?.items?.length === 1 && pct.json.items[0].slug === slugOf('pct-literal'),
+    'backend:fix/v1.2-review',
+    pct.json?.items?.map((i) => i.slug),
+  )
+
+  const underscoreProject = await createProject(slugOf('underscore-literal'), { name: `snake_case_tool ${RUN}` })
+  await setStatus(underscoreProject.id, 'published')
+  const underscore = await api('GET', `/projects?search=${encodeURIComponent('_')}`)
+  pendingBackend(
+    'search=_ 按字面量匹配（不是单字符通配）',
+    // 现状（未转义）：_ 当单字符通配，命中几乎所有名字（≥ 项目总数）
+    (underscore.json?.items?.length ?? 0) >= (pct.json?.total ?? 0),
+    underscore.json?.items?.length === 1 && underscore.json.items[0].slug === slugOf('underscore-literal'),
+    'backend:fix/v1.2-review',
+    underscore.json?.items?.map((i) => i.slug),
+  )
+
+  // 表外抽样 2：stars 同分时回 recent（否则顺序不稳，列表会「跳」）
+  const tieOld = await createProject(slugOf('tie-old'), {
+    name: `同分较旧 ${RUN}`,
+    stars: 500,
+    last_updated_at: new Date(Date.now() - 30 * DAY).toISOString(),
+  })
+  await setStatus(tieOld.id, 'published')
+  const tieNew = await createProject(slugOf('tie-new'), {
+    name: `同分较新 ${RUN}`,
+    stars: 500,
+    last_updated_at: new Date(Date.now() - 1 * DAY).toISOString(),
+  })
+  await setStatus(tieNew.id, 'published')
+  const tied = await api('GET', '/projects?sort=stars&pageSize=100')
+  const tieOrder = tied.json?.items?.map((i) => i.slug).filter((slug) => slug.startsWith(`${RUN}-tie`))
+  check(
+    'stars 同分时较新的排前面（回 recent）',
+    tieOrder?.[0] === slugOf('tie-new') && tieOrder?.[1] === slugOf('tie-old'),
+    tieOrder,
+  )
+
+  // 收拾干净，别影响后面的计数断言
+  for (const id of [pctProject.id, underscoreProject.id, tieOld.id, tieNew.id]) {
+    await api('DELETE', `/admin/projects/${id}`)
+  }
+}
 
 // ---------------------------------------------------------------- 项目：详情
 section('项目详情 / 可见性 / slug 301')
@@ -284,18 +364,24 @@ check(
   notes.json?.items?.every((i) => 'project' in i && Array.isArray(i.tags) && 'published_at' in i),
   notes.json?.items?.[0],
 )
-knownGap(
-  '列表项带 excerpt（契约 v1.2.3，后端实现中）',
+pendingBackend(
+  '列表项带 excerpt（契约 v1.2.3）',
+  notes.json?.items?.every((i) => !('excerpt' in i)),
   notes.json?.items?.every((i) => 'excerpt' in i),
+  'backend:excerpt',
   Object.keys(notes.json?.items?.[0] ?? {}),
 )
 check('列表按 published_at 倒序', notes.json?.items?.[0]?.slug === slugOf('note-2'), notes.json?.items?.map((i) => i.slug))
 check('pageSize=100 被接受', notes.json?.pageSize === 100, notes.json?.pageSize)
-knownGap(
+pendingBackend(
   'excerpt 去 Markdown 且不超过 121 字',
+  notes.json?.items?.every((i) => !('excerpt' in i)),
   notes.json?.items?.every(
-    (i) => !('excerpt' in i) || i.excerpt === null || (i.excerpt.length <= 121 && !i.excerpt.includes('##')),
+    (i) =>
+      'excerpt' in i &&
+      (i.excerpt === null || (String(i.excerpt).length <= 121 && !String(i.excerpt).includes('##'))),
   ),
+  'backend:excerpt',
   notes.json?.items?.map((i) => i.excerpt),
 )
 
@@ -309,9 +395,11 @@ const longNote = await api('POST', '/admin/notes', {
 })
 check('长正文笔记创建 201', longNote.status === 201, longNote.status)
 const longDetail = await api('GET', `/notes/${slugOf('note-long')}`)
-knownGap(
+pendingBackend(
   '长正文 excerpt 截到 120 字 + 省略号',
+  longDetail.json?.excerpt === undefined,
   typeof longDetail.json?.excerpt === 'string' && longDetail.json.excerpt.length === 121 && longDetail.json.excerpt.endsWith('…'),
+  'backend:excerpt',
   longDetail.json?.excerpt?.length,
 )
 
@@ -325,7 +413,13 @@ const emptyNote = await api('POST', '/admin/notes', {
 check('空正文笔记创建结果符合契约（201 或 400）', [201, 400].includes(emptyNote.status), emptyNote.status)
 if (emptyNote.status === 201) {
   const emptyDetail = await api('GET', `/notes/${slugOf('note-empty')}`)
-  knownGap('空正文 excerpt 为 null', emptyDetail.json?.excerpt === null, emptyDetail.json?.excerpt)
+  pendingBackend(
+    '空正文 excerpt 为 null',
+    emptyDetail.json?.excerpt === undefined,
+    emptyDetail.json?.excerpt === null,
+    'backend:excerpt',
+    emptyDetail.json?.excerpt,
+  )
 }
 
 const noteSearch = await api('GET', `/notes?search=${encodeURIComponent('正文二')}`)
@@ -357,12 +451,39 @@ const afterArchive = await api('GET', '/notes?pageSize=100')
 check('归档项目下的笔记不出现在公开列表', !afterArchive.json?.items?.some((i) => i.slug === slugOf('note-archived')), afterArchive.json?.items?.map((i) => i.slug))
 check('归档项目下的笔记详情 404', (await api('GET', `/notes/${slugOf('note-archived')}`)).status === 404)
 
+// ---------------------------------------------------------------- 表外抽样 3：笔记 >100 篇
+section('笔记 >100 篇（契约 §3.3：pageSize 上限 100，前端据此提示「仅显示最近 100 篇」）')
+{
+  let created = 0
+  for (let i = 0; i < 101; i += 1) {
+    const res = await api('POST', '/admin/notes', {
+      project_id: portfolio.id,
+      slug: slugOf(`bulk-${i}`),
+      title: `批量笔记 ${i}`,
+      body_md: '批量正文',
+      publish_status: 'published',
+    })
+    if (res.status === 201) created += 1
+  }
+  check('真的造出 101 篇', created === 101, created)
+
+  const capped = await api('GET', '/notes?pageSize=100')
+  check('pageSize=100 只返回 100 条', capped.json?.items?.length === 100, capped.json?.items?.length)
+  check('total 报真实总数（> 100，前端据此提示截断）', capped.json?.total >= 101, capped.json?.total)
+  const over = await api('GET', '/notes?pageSize=101')
+  check('pageSize 超过 100 被拒（400）', over.status === 400, over.status)
+}
+
 // ---------------------------------------------------------------- 收尾
 section('结果')
 console.log(`  契约必须项：${failures.length === 0 ? '全部通过' : `${failures.length} 项失败`}`)
-if (gaps.length) {
-  console.log(`  已知后端缺口：${gaps.length} 项（后端 fix/v1.2-review 修复后应转绿；--strict 时计为失败）`)
-  for (const gap of gaps) console.log(`    ⚠ ${gap}`)
+if (pending.length) {
+  console.log(`  带 TODO 标注、等后端合的行：${pending.length} 项（红行 = 后端还没合，不是前端没改对）`)
+  for (const item of pending) console.log(`    ✗ ${item}`)
+}
+if (todoDone.length) {
+  console.log(`  后端已修、标注可以删的行：${todoDone.length} 项`)
+  for (const item of todoDone) console.log(`    ✓ ${item}`)
 }
 if (failures.length) failures.forEach((name) => console.log(`    ✗ ${name}`))
-process.exit(failures.length || (STRICT && gaps.length) ? 1 : 0)
+process.exit(failures.length || (STRICT && pending.length) ? 1 : 0)

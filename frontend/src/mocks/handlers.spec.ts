@@ -132,19 +132,60 @@ describe('公开项目列表 GET /projects', () => {
     expect(recent.items[0].slug).toBe('portfolio-platform')
   })
 
-  it('分页越界一律 400，不夹取（契约 1）', async () => {
-    const data = await bodyOf<ProjectListEnvelope>(
+  it('参数非法 → 400：page < 1 / pageSize ∉ 1..100 / 非整数', async () => {
+    for (const query of [{ page: '0' }, { page: '-1' }, { page: 'abc' }, { page: '1.5' }]) {
+      const res = call('GET', '/projects', { query })
+      expect(res.status).toBe(400)
+      expect((await bodyOf<{ error: { code: string } }>(res)).error.code).toBe('VALIDATION_ERROR')
+    }
+    for (const query of [{ pageSize: '999' }, { pageSize: '0' }, { pageSize: 'x' }]) {
+      const res = call('GET', '/projects', { query })
+      expect(res.status).toBe(400)
+      expect((await bodyOf<{ error: { code: string } }>(res)).error.code).toBe('VALIDATION_ERROR')
+    }
+  })
+
+  it('语义越界 → 200 空页 + 真实 total/totalPages（契约 1，不夹取也不报错）', async () => {
+    const lastPage = await bodyOf<ProjectListEnvelope>(
       call('GET', '/projects', { query: { page: '2', pageSize: '2' } }),
     )
-    expect(data.items).toHaveLength(1)
-    expect(data.page).toBe(2)
-    expect(data.pageSize).toBe(2)
+    expect(lastPage.items).toHaveLength(1)
+    expect(lastPage.page).toBe(2)
+    expect(lastPage.pageSize).toBe(2)
+    expect(lastPage.totalPages).toBe(2)
 
-    expect(call('GET', '/projects', { query: { page: '0' } }).status).toBe(400)
-    expect(call('GET', '/projects', { query: { pageSize: '999' } }).status).toBe(400)
-    expect(call('GET', '/projects', { query: { pageSize: '0' } }).status).toBe(400)
-    // 页码超过总页数也是 400，不返回空页
-    expect(call('GET', '/projects', { query: { page: '99' } }).status).toBe(400)
+    const beyond = await bodyOf<ProjectListEnvelope>(
+      call('GET', '/projects', { query: { page: '99', pageSize: '2' } }),
+    )
+    expect(beyond.items).toEqual([])
+    expect(beyond.page).toBe(99)
+    // total / totalPages 报真实值：前端靠它判断「到底有没有数据」
+    expect(beyond.total).toBe(lastPage.total)
+    expect(beyond.totalPages).toBe(lastPage.totalPages)
+  })
+
+  it('search 超过 200 字 → 400：输入框已收口，手改 URL 也不放过', async () => {
+    const tooLong = 'a'.repeat(201)
+    for (const path of ['/projects', '/notes']) {
+      const res = call('GET', path, { query: { search: tooLong } })
+      expect(res.status).toBe(400)
+      const payload = await bodyOf<{ error: { code: string; details?: Array<{ field: string }> } }>(res)
+      expect(payload.error.code).toBe('VALIDATION_ERROR')
+      expect(payload.error.details?.map((d) => d.field)).toEqual(['search'])
+    }
+    // 200 字整好是上限，不该被拒
+    expect(call('GET', '/projects', { query: { search: 'a'.repeat(200) } }).status).toBe(200)
+  })
+
+  it('分页参数非法时 details 只保证 field + message（契约不定义 code 词表）', async () => {
+    const res = call('GET', '/projects', { query: { page: '0', pageSize: '999' } })
+    const payload = await bodyOf<{ error: { code: string; details: Array<Record<string, unknown>> } }>(res)
+    expect(payload.error.code).toBe('VALIDATION_ERROR')
+    expect(payload.error.details.map((d) => d.field).sort()).toEqual(['page', 'pageSize'])
+    for (const detail of payload.error.details) {
+      expect(typeof detail.message).toBe('string')
+      expect(String(detail.message).length).toBeGreaterThan(0)
+    }
   })
 })
 

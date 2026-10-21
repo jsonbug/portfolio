@@ -40,5 +40,7 @@ npm run contract -- --strict # 已知缺口也当失败（后端修完后用这�
 ## 注意
 
 - 脚本开头会**软删目标库里的所有既有项目**（保证计数断言确定），只对本地 `dev.db` 这种测试库用。
-- 已知后端缺口（`?search=%` 未转义、`page` 越界返回 200 空页）在修复前以 `⚠` 告警，不阻塞；后端 `fix/v1.2-review` 落地后应转绿。
+- **带 TODO 标注的红行 = 后端还没合，不是前端没改对**。`pendingBackend(name, 当前行为, 契约行为, 'backend:…')` 会断言「当前真实行为」并打 `✗ … TODO(backend:xxx)`，既不静默放行，也不把行从表里删掉；后端合入后该行自动变 `✓ …（后端已修，删掉本行 TODO 标注即可）`，前端同批把标注改成 `check()`。
+- 当前带标注的：`search` 的 `%`/`_` 未转义（`fix/v1.2-review`）、`NoteSummary.excerpt` 未上线（契约 v1.2.3）。
+- 表外抽样（不在 15 行对照表内，防「只对快照不对行为」）：`search` 超 200 字 → 400、`search=%` / `search=_` 字面量匹配、`stars` 同分回 `recent`、笔记 >100 篇（pageSize 上限 100 + 真实 `total`）。
 - mock 侧同口径由 `frontend/src/mocks/handlers.spec.ts` 守住；这套脚本守的是「mock 与真实后端同构」。
