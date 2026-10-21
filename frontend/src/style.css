@@ -1,58 +1,127 @@
 /* ============================================================
-   设计令牌 —— 对齐 ALICE-4 方向 A「纸感编辑台」
-   暖中性底 + 靛蓝主色 + 12px 卡片圆角，对比度均 ≥ 5.2:1
+   设计令牌 —— 对齐 ALICE-4 方向 A「纸感编辑台」Style Tile
+   暖中性底 + 靛蓝主色 + 12px 卡片圆角，全部对比度 ≥ 5.2:1（WCAG 2.1 AA，
+   N5 不设对比度豁免）。数值改动前先跑 src/styles/tokens.spec.ts。
    ============================================================ */
 :root {
+  /* ---------- 色彩 ---------- */
   /* 主色（靛蓝） */
-  --c-primary: #2b4acb;
-  --c-primary-strong: #1e36a0;
-  --c-primary-soft: #edf0fe;
-  /* 辅色（赤陶） */
+  --c-primary: #2b4acb; /* 6.8:1 白字 6.9:1 */
+  --c-primary-strong: #1e36a0; /* 10.6:1 */
+  --c-primary-soft: #edf0fe; /* 承载 #1e36a0 文字 */
+  /* 辅色（赤陶，仅点缀） */
   --c-accent: #b84a22;
+  --c-accent-soft: #fbe0e6;
 
-  /* 中性色 */
-  --c-ink: #14110d;
-  --c-text: #3d3833;
-  --c-text-secondary: #6e6862;
-  --c-text-placeholder: #9a948c; /* 仅占位/装饰，不承载关键信息 */
-  --c-bg: #fbfaf8;
-  --c-surface: #ffffff;
-  --c-border: #e6e2db;
-  --c-fill: #f4f2ee;
+  /* 中性色：越往下越轻，--c-text-placeholder 及更浅不承载正文语义 */
+  --c-ink: #14110d; /* 主文字 17.0:1 */
+  --c-text: #3d3833; /* 正文 10.1:1 */
+  --c-text-secondary: #6e6862; /* 次要 5.2:1 */
+  --c-text-placeholder: #9a948c; /* 占位/图标 2.8:1 —— 禁用 */
+  --c-border: #e6e2db; /* 1px 分割线 / 装饰元数据 */
+  --c-control-border: #d6d1c8; /* 输入框描边 */
+  --c-fill: #f4f2ee; /* 次级填充：标签 / hover 底 */
+  --c-surface: #ffffff; /* 页面底 / 卡片 */
 
-  /* 语义色 */
-  --c-success: #1e7a4d;
-  --c-warning: #8a5b00;
-  --c-danger: #b4342b;
+  /* 语义色（只用状态，不做品牌表达） */
+  --c-success: #1e7a4d; /* 已上线 5.4:1 */
+  --c-warning: #8a5b00; /* 进行中 5.9:1 */
+  --c-danger: #b4342b; /* 错误 6.1:1 */
+  --c-neutral-badge-bg: #f1efec; /* 已归档底 */
+  --c-neutral-badge-text: #6e6862; /* 已归档徽标文字 4.8:1（D6 指定值，保留实心方块） */
 
-  /* 圆角 */
-  --r-tag: 4px;
-  --r-control: 8px;
-  --r-card: 12px;
-  --r-overlay: 16px;
-  --r-pill: 999px;
+  /* 封面渐层兜底（与 utils/cover.ts 的 GRADIENT_PRESETS 为同一组 6 套预设） */
+  --cover-grad-1-from: #1b2350;
+  --cover-grad-1-to: #5b79f0;
+  --cover-grad-2-from: #12372f;
+  --cover-grad-2-to: #2e7d63;
+  --cover-grad-3-from: #3a2214;
+  --cover-grad-3-to: #9a5b2e;
+  --cover-grad-4-from: #1a1a1e;
+  --cover-grad-4-to: #4a4e5a;
+  --cover-grad-5-from: #2a1b3d;
+  --cover-grad-5-to: #6b4e9e;
+  --cover-grad-6-from: #3b1b22;
+  --cover-grad-6-to: #8a3a47;
 
-  /* 阴影 */
-  --shadow-e1: 0 1px 2px rgba(20, 17, 13, 0.06);
+  /* ---------- 字号阶梯（Style Tile「字体阶梯」） ---------- */
+  --fs-display: 44px;
+  --lh-display: 52px;
+  --tracking-display: -0.025em; /* -2.5% */
+  --fs-h1: 32px;
+  --lh-h1: 40px;
+  --fs-h2: 22px;
+  --lh-h2: 32px;
+  --fs-h3: 17px; /* 卡片标题 17/26 · 600 · -1% */
+  --lh-h3: 26px;
+  --fs-body: 15px;
+  --lh-body: 26px;
+  --fs-small: 13px; /* 卡片摘要 / 表单字段 / 列表日期 */
+  --lh-small: 21px;
+  --fs-mono: 12px; /* slug / 计数 / tabular-nums */
+  --lh-mono: 18px;
+  --fw-regular: 400;
+  --fw-semibold: 600;
+  --fw-bold: 700;
 
-  /* 间距（8pt 栅格） */
-  --sp-1: 8px;
-  --sp-2: 16px;
-  --sp-3: 24px;
-  --sp-4: 34px;
-  --sp-5: 52px;
+  /* ---------- 间距（8pt 栅格 + 4px 微调） ---------- */
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-40: 40px;
+  --space-48: 48px;
+  --space-64: 64px;
+  /* 旧别名（既有组件沿用）；语义不变，仅修正为栅格值：34→32、52→48 */
+  --sp-0: var(--space-4);
+  --sp-1: var(--space-8);
+  --sp-2: var(--space-16);
+  --sp-3: var(--space-24);
+  --sp-4: var(--space-32);
+  --sp-5: var(--space-48);
 
-  /* 字体 */
+  /* ---------- 圆角 ---------- */
+  --r-tag: 4px; /* 标签 / 输入 */
+  --r-control: 8px; /* 按钮 / 输入框 / 缩略图 */
+  --r-card: 12px; /* 卡片 */
+  --r-overlay: 16px; /* 抽屉 / 弹层 */
+  --r-pill: 999px; /* 徽标 */
+
+  /* ---------- 阴影 ---------- */
+  --shadow-e1: 0 1px 2px rgba(20, 17, 13, 0.06); /* 静止 */
+  --shadow-e2: 0 4px 16px rgba(20, 17, 13, 0.08); /* 悬停 / 图片 */
+  --shadow-e3: 0 12px 32px rgba(20, 17, 13, 0.12); /* 抽屉 / 弹层 */
+
+  /* ---------- 交互与尺寸 ---------- */
+  --focus-width: 2px; /* N5：2px #2B4ACB + 2px offset */
+  --focus-offset: 2px;
+  --control-h: 36px; /* 输入框 */
+  --btn-h: 38px; /* 主按钮 */
+  --btn-h-sm: 32px; /* 小号按钮 */
+  --icon-size: 28px; /* 图标按钮视觉尺寸 */
+  --touch-min: 44px; /* 触控热区下限（移动端 ≥44×44） */
+
+  /* ---------- 布局 ---------- */
+  --content-max: 1376px; /* 1440 − 32×2 */
+  --gutter: 24px; /* 列间距 */
+  --card-gap: 24px;
+  --row-gap: 18px;
+  --admin-min-width: 768px; /* 后台最小支持宽度，低于不做适配 */
+
+  /* ---------- 字体 ---------- */
   --font-sans:
     'HarmonyOS Sans SC', system-ui, -apple-system, 'Segoe UI', 'PingFang SC',
     'Microsoft YaHei', sans-serif;
+  --font-mono: 'DejaVu Sans Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
 
   color-scheme: light;
   font-family: var(--font-sans);
-  font-size: 15px;
-  line-height: 1.6;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
   color: var(--c-text);
-  background-color: var(--c-bg);
+  background-color: var(--c-surface);
 }
 
 *,
@@ -66,6 +135,44 @@ body {
   min-height: 100vh;
 }
 
+/* ---------- 排版工具类（Style Tile 字号阶梯的可复用出口） ---------- */
+.type-display {
+  margin: 0;
+  font-size: var(--fs-display);
+  line-height: var(--lh-display);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-display);
+  color: var(--c-ink);
+}
+.type-h1 {
+  margin: 0;
+  font-size: var(--fs-h1);
+  line-height: var(--lh-h1);
+  font-weight: var(--fw-semibold);
+  color: var(--c-ink);
+}
+.type-h2 {
+  margin: 0;
+  font-size: var(--fs-h2);
+  line-height: var(--lh-h2);
+  font-weight: var(--fw-semibold);
+  color: var(--c-ink);
+}
+.type-body {
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+.type-small {
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  color: var(--c-text-secondary);
+}
+.type-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+}
+
 /* 数字/代码等宽 + 表格数字对齐 */
 .tabular-nums,
 code {
@@ -75,8 +182,8 @@ code {
 
 /* 统一焦点环（无障碍） */
 :focus-visible {
-  outline: 2px solid var(--c-primary);
-  outline-offset: 2px;
+  outline: var(--focus-width) solid var(--c-primary);
+  outline-offset: var(--focus-offset);
 }
 
 a {
@@ -93,11 +200,12 @@ a:hover {
 .select,
 .textarea {
   width: 100%;
-  padding: 8px 12px;
+  min-height: var(--control-h);
+  padding: 6px 12px;
   font: inherit;
   color: var(--c-text);
   background: var(--c-surface);
-  border: 1px solid var(--c-border);
+  border: 1px solid var(--c-control-border);
   border-radius: var(--r-control);
 }
 .input::placeholder,
@@ -108,7 +216,7 @@ a:hover {
 .select:focus,
 .textarea:focus {
   border-color: var(--c-primary);
-  outline: 2px solid var(--c-primary);
+  outline: var(--focus-width) solid var(--c-primary);
   outline-offset: 0;
 }
 
@@ -116,13 +224,15 @@ a:hover {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 44px; /* 热区 ≥ 44px */
+  min-height: var(--btn-h);
   padding: 8px 16px;
   font: inherit;
-  font-weight: 600;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  font-weight: var(--fw-semibold);
   color: var(--c-text);
   background: var(--c-surface);
-  border: 1px solid var(--c-border);
+  border: 1px solid var(--c-control-border);
   border-radius: var(--r-control);
   cursor: pointer;
   transition:
@@ -134,7 +244,10 @@ a:hover {
 }
 .btn:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+  opacity: 0.55; /* 仅不透明度降级，文字仍可见 */
+}
+.btn:disabled:hover {
+  background: var(--c-surface);
 }
 .btn-primary {
   color: #ffffff;
@@ -157,6 +270,34 @@ a:hover {
 .btn-ghost:hover {
   background: var(--c-fill);
 }
+.btn-sm {
+  min-height: var(--btn-h-sm);
+  padding: 4px 12px;
+  border-radius: var(--r-tag);
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
+}
+
+/* 图标按钮：视觉 28，热区 40（移动端 44） */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  color: var(--c-text-secondary);
+  background: var(--c-surface);
+  border: 1px solid var(--c-control-border);
+  border-radius: var(--r-tag);
+  cursor: pointer;
+}
+@media (pointer: coarse) {
+  .btn-icon {
+    width: var(--touch-min);
+    height: var(--touch-min);
+  }
+}
 
 .card {
   background: var(--c-surface);
@@ -171,13 +312,15 @@ a:hover {
   gap: 6px;
 }
 .field-label {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
+  font-weight: var(--fw-semibold);
   color: var(--c-text-secondary);
 }
 
+/* 前台内容区：1376 上限 + 32 边距（Style Tile「内容区 1376」） */
 .page {
-  max-width: 72rem;
+  max-width: var(--content-max);
   margin: 0 auto;
-  padding: var(--sp-4) var(--sp-3);
+  padding: var(--space-32) var(--space-32);
 }
