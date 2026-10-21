@@ -28,8 +28,8 @@ describe('后台项目列表列配置', () => {
     expect(positive).toEqual([...positive].sort((a, b) => a - b))
   })
 
-  it('768 整宽：7 列全显', () => {
-    expect(keysAt(768)).toEqual([
+  it('1280 起 7 列全显（D5：桌面默认档）', () => {
+    expect(keysAt(1280)).toEqual([
       'name',
       'slug',
       'publish_status',
@@ -38,11 +38,12 @@ describe('后台项目列表列配置', () => {
       'updated_at',
       'actions',
     ])
-    expect(hiddenColumns(768)).toEqual([])
+    expect(hiddenColumns(1280)).toEqual([])
+    expect(keysAt(1279)).toEqual(['name', 'slug', 'publish_status', 'progress', 'links', 'updated_at'])
   })
 
-  it('767：只隐最右一列「操作」', () => {
-    expect(keysAt(767)).toEqual([
+  it('1120–1279：先隐「操作」', () => {
+    expect(keysAt(1120)).toEqual([
       'name',
       'slug',
       'publish_status',
@@ -50,23 +51,24 @@ describe('后台项目列表列配置', () => {
       'links',
       'updated_at',
     ])
-    expect(hiddenColumns(767).map((column) => column.key)).toEqual(['actions'])
+    expect(hiddenColumns(1120).map((column) => column.key)).toEqual(['actions'])
   })
 
   it('逐级变窄按 priority 依次消失（操作 → 更新时间 → 进展 → slug）', () => {
-    expect(keysAt(640)).toEqual(['name', 'slug', 'publish_status', 'progress', 'links', 'updated_at'])
-    expect(keysAt(639)).toEqual(['name', 'slug', 'publish_status', 'progress', 'links'])
-    expect(keysAt(512)).toEqual(['name', 'slug', 'publish_status', 'progress', 'links'])
-    expect(keysAt(511)).toEqual(['name', 'slug', 'publish_status', 'links'])
-    expect(keysAt(384)).toEqual(['name', 'slug', 'publish_status', 'links'])
-    expect(keysAt(383)).toEqual(['name', 'publish_status', 'links'])
+    // 1024–1119：再隐「更新时间」
+    expect(keysAt(1119)).toEqual(['name', 'slug', 'publish_status', 'progress', 'links'])
+    // 768–1023：再隐「进展」
+    expect(keysAt(1023)).toEqual(['name', 'slug', 'publish_status', 'links'])
+    expect(keysAt(768)).toEqual(['name', 'slug', 'publish_status', 'links'])
+    // <768：最后隐「slug」
+    expect(keysAt(767)).toEqual(['name', 'publish_status', 'links'])
   })
 
   it('恢复宽度后列序不变：宽 → 窄 → 宽，两次宽度下可见列完全一致', () => {
     const wide = keysAt(1440)
     keysAt(320)
     expect(keysAt(1440)).toEqual(wide)
-    expect(keysAt(1440)).toEqual(keysAt(768))
+    expect(keysAt(1440)).toEqual(keysAt(1280))
   })
 
   it('任何宽度下列序都是完整列序的子序列（隐藏只做减法，不重排）', () => {
@@ -96,6 +98,6 @@ describe('后台项目列表列配置', () => {
   })
 
   it('断点表与列配置一致（加第 8 列时这里会提示补用例）', () => {
-    expect(COLUMN_BREAKPOINTS).toEqual([768, 640, 512, 384])
+    expect(COLUMN_BREAKPOINTS).toEqual([1280, 1120, 1024, 768])
   })
 })

@@ -723,21 +723,37 @@ async function runMockSide() {
 
 if (!isMain) {
   // 被 `src/mocks/contract-bridge.spec.ts` import 时只导出 runPlan，不触发 CLI
-} else if (SOURCE === 'real' || SOURCE === 'both') {
-  const realRows = await runPlan({ transport: realTransport })
-  const realSummary = printSummary(realRows)
-  if (SOURCE === 'both') {
-    const mockRows = await runMockSide()
-    if (!mockRows) process.exit(2)
-    const diverged = diffRows(realRows, mockRows)
-    process.exit(realSummary.code || diverged.length ? 1 : 0)
-  }
-  process.exit(realSummary.code)
 } else if (SOURCE === 'mock') {
   const mockRows = await runMockSide()
   if (!mockRows) process.exit(2)
   process.exit(printSummary(mockRows).code)
 } else {
-  console.error(`未知 --source=${SOURCE}（可选 real / mock / both）`)
-  process.exit(2)
+  // 收尾清场与开头同源：/ 自己建的 RUN- 项目自己收，异常路径也走 finally。
+  let exitCode = 0
+  try {
+    const realRows = await runPlan({ transport: realTransport })
+    const realSummary = printSummary(realRows)
+    if (SOURCE === 'both') {
+      const mockRows = await runMockSide()
+      if (!mockRows) {
+        exitCode = 2
+      } else {
+        const diverged = diffRows(realRows, mockRows)
+        exitCode = realSummary.code || diverged.length ? 1 : 0
+      }
+    } else if (SOURCE === 'real') {
+      exitCode = realSummary.code
+    } else {
+      console.error(`未知 --source=${SOURCE}（可选 real / mock / both）`)
+      exitCode = 2
+    }
+  } finally {
+    try {
+      await cleanupRunProjects()
+    } catch (err) {
+      console.error(`  ⚠ 收尾清场失败：${err instanceof Error ? err.message : String(err)}`)
+      if (exitCode === 0) exitCode = 1
+    }
+  }
+  process.exit(exitCode)
 }

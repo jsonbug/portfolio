@@ -4,7 +4,9 @@
  * 为什么是数据：加第 8 列时只需要在表里插一行并给它 `minWidth`，隐列顺序自动成立；
  * 顺序也不再靠 CSS 源码里的先后，而是 `PROJECT_LIST_COLUMNS` 的数组顺序 —— 断言可以直接读它。
  *
- * 规则（gap §四）：**从右往左逐列隐藏**，`minWidth` 大的先消失；`minWidth: 0` 表示任何宽度都不隐藏。
+ * 规则（D5 稿 `08-D5-D6-列优先级与状态徽标.png`）：**从右往左逐列隐藏**
+ * 操作(≥1280) → 更新时间(≥1120) → 进展(≥1024) → slug(≥768)；名称 / 发布状态 / 链接恒显。
+ * 被隐藏的列不是丢信息，而是降级到别处：更新时间 / slug 进名称下方小字，进展并入发布状态单元格堆叠。
  */
 
 export type ProjectColumnKey =
@@ -29,12 +31,12 @@ export interface ProjectColumn {
 /** 展示顺序即数组顺序：名称 → slug → 发布状态 → 进展 → 链接 → 更新时间 → 操作。 */
 export const PROJECT_LIST_COLUMNS: readonly ProjectColumn[] = [
   { key: 'name', label: '名称', minWidth: 0, className: 'col-name' },
-  { key: 'slug', label: 'slug', minWidth: 384, className: 'col-slug' },
+  { key: 'slug', label: 'slug', minWidth: 768, className: 'col-slug' },
   { key: 'publish_status', label: '发布状态', minWidth: 0, className: 'col-status' },
-  { key: 'progress', label: '进展', minWidth: 512, className: 'col-progress' },
+  { key: 'progress', label: '进展', minWidth: 1024, className: 'col-progress' },
   { key: 'links', label: '链接', minWidth: 0, className: 'col-links' },
-  { key: 'updated_at', label: '更新时间', minWidth: 640, className: 'col-updated' },
-  { key: 'actions', label: '操作', minWidth: 768, className: 'col-actions' },
+  { key: 'updated_at', label: '更新时间', minWidth: 1120, className: 'col-updated' },
+  { key: 'actions', label: '操作', minWidth: 1280, className: 'col-actions' },
 ]
 
 /** 指定视口宽度下应显示的列（保持展示顺序，不会重排）。 */
