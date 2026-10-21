@@ -180,6 +180,19 @@ describe('HomeView 技术栈与排序', () => {
     expect(router.currentRoute.value.query.tech).toBeUndefined()
   })
 
+  it('同一 tick 内连续两次点同一个技术栈，能正确回到未筛选', async () => {
+    const { router } = await renderHome()
+    await waitForList()
+
+    const chip = screen.getByRole('button', { name: 'Python' })
+    // 不 await：模拟极快的连点（路由还没落定）
+    await fireEvent.click(chip)
+    await fireEvent.click(chip)
+
+    await waitFor(() => expect(cardNames().sort()).toEqual([...CARD_NAMES].sort()))
+    expect(router.currentRoute.value.query.tech).toBeUndefined()
+  })
+
   it('排序可切到 star 降序，并同步 URL', async () => {
     const { router } = await renderHome()
     await waitForList()
