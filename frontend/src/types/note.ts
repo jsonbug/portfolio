@@ -18,6 +18,11 @@ export interface NoteSummary {
   updated_at: string
 }
 
+/** 后台项目详情里的笔记：带曝光状态（编辑器要区分草稿）。 */
+export interface AdminNoteSummary extends NoteSummary {
+  publish_status: NotePublishStatus
+}
+
 /** 前台笔记详情：摘要 + 正文（Markdown 原文）。 */
 export interface NoteDetail extends NoteSummary {
   body_md: string

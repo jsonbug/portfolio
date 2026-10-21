@@ -37,6 +37,8 @@ import {
   patchLink,
   projectRedirectTarget,
   removeLink,
+  toLink,
+  checkLinkNow,
   removeNote,
   replaceProjectMetadata,
   restoreProject,
@@ -418,7 +420,7 @@ function handleAdmin(req: MockRequest): Response {
     if (!project) return notFound('项目')
     const details = validateLinkInput(body)
     if (details.length) return errorResponse(400, 'VALIDATION_ERROR', '请求参数校验失败', details)
-    return created(addLink(state, project.id, body as LinkCreate))
+    return created(toLink(addLink(state, project.id, body as LinkCreate)))
   }
 
   const adminProject = matchRoute('/admin/projects/:id', path)
@@ -461,13 +463,21 @@ function handleAdmin(req: MockRequest): Response {
     if (method === 'PATCH') {
       const details = validateLinkInput(body, true)
       if (details.length) return errorResponse(400, 'VALIDATION_ERROR', '请求参数校验失败', details)
-      return ok(patchLink(state, link, body as LinkUpdate))
+      return ok(toLink(patchLink(state, link, body as LinkUpdate)))
     }
     if (method === 'DELETE') {
       removeLink(state, link)
       return noContent()
     }
     return errorResponse(405, 'METHOD_NOT_ALLOWED', '方法不允许')
+  }
+
+  const linkCheck = matchRoute('/admin/links/:id/check', path)
+  if (linkCheck) {
+    if (method !== 'POST') return errorResponse(405, 'METHOD_NOT_ALLOWED', '方法不允许')
+    const link = state.links.find((l) => l.id === linkCheck.id)
+    if (!link) return notFound('链接')
+    return ok(toLink(checkLinkNow(state, link)))
   }
 
   // ---- 笔记（N:1） ----

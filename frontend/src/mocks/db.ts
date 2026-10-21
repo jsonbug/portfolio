@@ -13,10 +13,14 @@
 import type {
   AdminNoteDetail,
   AdminNoteListItem,
+  AdminNoteSummary,
+  AdminProjectListCounts,
+  AdminProjectListEnvelope,
   AdminProjectDetail,
   AdminProjectListItem,
   AdminNoteQuery,
   Link,
+  LinkStatus,
   LinkType,
   ListEnvelope,
   MetadataItem,
@@ -70,7 +74,8 @@ export interface DbLink {
   label: string | null
   url: string
   sort: number
-  last_status: Link['last_status']
+  /** 库里 null = 从未检查；wire 上由 toLink 转成 'unknown'。 */
+  last_status: LinkStatus | null
   last_http_status: number | null
   last_checked_at: string | null
   created_at: string
@@ -396,14 +401,15 @@ export function linksOf(state: DbState, projectId: string): DbLink[] {
     .sort((a, b) => a.sort - b.sort || a.created_at.localeCompare(b.created_at))
 }
 
-function toLink(l: DbLink): Link {
+export function toLink(l: DbLink): Link {
   return {
     id: l.id,
     type: l.type,
     label: l.label,
     url: l.url,
     sort: l.sort,
-    last_status: l.last_status,
+    // 契约：库里 null = 从未检查，wire 上统一是 'unknown'（前端不处理 null）。
+    last_status: l.last_status ?? 'unknown',
     last_http_status: l.last_http_status,
     last_checked_at: l.last_checked_at,
     created_at: l.created_at,
@@ -463,6 +469,18 @@ function publishedNotesOf(state: DbState, projectId: string): NoteSummary[] {
     .map((n) => toNoteSummary(state, n))
 }
 
+/** 后台项目详情里的笔记：全部（含草稿），逐条带曝光状态。 */
+function adminNotesOf(state: DbState, projectId: string): AdminNoteSummary[] {
+  return state.notes
+    .filter((n) => n.project_id === projectId)
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+    .map((n) => toAdminNoteSummary(state, n))
+}
+
+export function toAdminNoteSummary(state: DbState, n: DbNote): AdminNoteSummary {
+  return { ...toNoteSummary(state, n), publish_status: n.publish_status }
+}
+
 function metadataOf(state: DbState, projectId: string): MetadataItem[] {
   return state.metadata
     .filter((m) => m.project_id === projectId)
@@ -476,10 +494,7 @@ export function toProjectDetail(
   options: { includeDraftNotes?: boolean } = {},
 ): ProjectDetail {
   const notes = options.includeDraftNotes
-    ? state.notes
-        .filter((n) => n.project_id === p.id)
-        .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
-        .map((n) => toNoteSummary(state, n))
+    ? adminNotesOf(state, p.id)
     : publishedNotesOf(state, p.id)
 
   return {
@@ -505,7 +520,9 @@ export function toAdminProjectListItem(state: DbState, p: DbProject): AdminProje
 
 export function toAdminProjectDetail(state: DbState, p: DbProject): AdminProjectDetail {
   return {
-    ...toProjectDetail(state, p, { includeDraftNotes: true }),
+    ...toProjectDetail(state, p),
+    // 后台详情要看到草稿笔记，且每条带 publish_status（契约 4.1）。
+    notes: adminNotesOf(state, p.id),
     publish_status: p.publish_status,
     published_at: p.published_at,
     cover_source_url: p.cover_source_url,
@@ -622,17 +639,27 @@ export interface AdminProjectListParams {
 export function listAdminProjects(
   state: DbState,
   params: AdminProjectListParams = {},
-): ListEnvelope<AdminProjectListItem> {
+): AdminProjectListEnvelope {
   const { publish_status, progress, search = '', includeDeleted = false, page = 1, pageSize = 20 } = params
-  const rows = state.projects
+  // counts：search + includeDeleted 过滤后、publish_status / progress 过滤前（契约 4.1）。
+  const scoped = state.projects
     .filter((p) => (includeDeleted ? true : p.deleted_at === null))
+    .filter((p) => matches([p.name, p.summary, p.slug], search))
+
+  const counts: AdminProjectListCounts = {
+    all: scoped.length,
+    draft: scoped.filter((p) => p.publish_status === 'draft').length,
+    published: scoped.filter((p) => p.publish_status === 'published').length,
+    archived: scoped.filter((p) => p.publish_status === 'archived').length,
+  }
+
+  const rows = scoped
     .filter((p) => (publish_status ? p.publish_status === publish_status : true))
     .filter((p) => (progress ? p.progress === progress : true))
-    .filter((p) => matches([p.name, p.summary, p.slug], search))
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
 
   const envelope = paginate(rows, page, pageSize)
-  return { ...envelope, items: envelope.items.map((p) => toAdminProjectListItem(state, p)) }
+  return { ...envelope, items: envelope.items.map((p) => toAdminProjectListItem(state, p)), counts }
 }
 
 function aliasTarget(state: DbState, entity: 'project' | 'note', slug: string): string | null {
@@ -855,6 +882,14 @@ export function addLink(
     created_at: iso(now),
   }
   state.links.push(link)
+  return link
+}
+
+/** 模拟 `POST /admin/links/:id/check`：mock 里一律判成功（真实检查与 SSRF 防护在后端）。 */
+export function checkLinkNow(state: DbState, link: DbLink): DbLink {
+  link.last_status = 'ok'
+  link.last_http_status = 200
+  link.last_checked_at = iso(state.now)
   return link
 }
 

@@ -230,6 +230,26 @@ describe('后台项目 GET/POST /admin/projects', () => {
     expect(withDeleted.items[0]).toHaveProperty('deleted_at')
   })
 
+  it('响应带按 publish_status 分段的 counts（v1.2.2，口径与前台对称）', async () => {
+    const res = await bodyOf<{ items: AdminProjectListItem[]; counts: Record<string, number> }>(
+      call('GET', '/admin/projects'),
+    )
+    // 种子：published 3（含 1 个软删，默认不含）、archived 1、draft 1
+    expect(res.counts).toEqual({ all: 5, draft: 1, published: 3, archived: 1 })
+
+    // 分段过滤不改 counts（分段数字始终是全部口径）
+    const drafts = await bodyOf<{ counts: Record<string, number> }>(
+      call('GET', '/admin/projects', { query: { publish_status: 'draft' } }),
+    )
+    expect(drafts.counts).toEqual(res.counts)
+
+    // 搜索会重算
+    const searched = await bodyOf<{ counts: Record<string, number> }>(
+      call('GET', '/admin/projects', { query: { search: '草稿' } }),
+    )
+    expect(searched.counts).toEqual({ all: 1, draft: 1, published: 0, archived: 0 })
+  })
+
   it('支持 publish_status / progress / search 过滤', async () => {
     const drafts = await bodyOf<{ items: AdminProjectListItem[] }>(
       call('GET', '/admin/projects', { query: { publish_status: 'draft' } }),
@@ -272,6 +292,13 @@ describe('后台项目 GET/POST /admin/projects', () => {
     expect(res.status).toBe(400)
     const err = await bodyOf<{ error: { details?: Array<{ field: string }> } }>(res)
     expect(err.error.details?.some((d) => d.field === 'name')).toBe(true)
+  })
+
+  it('详情里的笔记带 publish_status（含草稿，v1.2.2）', async () => {
+    const detail = await bodyOf<AdminProjectDetail>(call('GET', '/admin/projects/proj_portfolio'))
+    expect(detail.notes.length).toBeGreaterThan(1)
+    expect(detail.notes.some((n) => n.publish_status === 'draft')).toBe(true)
+    expect(detail.notes.every((n) => n.publish_status)).toBe(true)
   })
 })
 
@@ -386,6 +413,25 @@ describe('链接 /admin/links', () => {
     const del = call('DELETE', `/admin/links/${link.id}`)
     expect(del.status).toBe(204)
     expect(call('DELETE', `/admin/links/${link.id}`).status).toBe(404)
+  })
+
+  it('健康检查：未检查过的链接 last_status 是 unknown，重检后变 ok', async () => {
+    const created = await bodyOf<Link>(
+      call('POST', '/admin/projects/proj_crawler/links', {
+        body: { type: 'site', url: 'https://crawler.example.com' },
+      }),
+    )
+    // 契约 4.4：库里 null 在 wire 上表现为 'unknown'，前端不处理 null
+    expect(created.last_status).toBe('unknown')
+    expect(created.last_checked_at).toBeNull()
+
+    const checked = await bodyOf<Link>(call('POST', `/admin/links/${created.id}/check`))
+    expect(checked.last_status).toBe('ok')
+    expect(checked.last_http_status).toBe(200)
+    expect(checked.last_checked_at).not.toBeNull()
+
+    expect(call('GET', `/admin/links/${created.id}/check`).status).toBe(405)
+    expect(call('POST', '/admin/links/link_missing/check').status).toBe(404)
   })
 
   it('非法 URL 400、非法类型 400', async () => {

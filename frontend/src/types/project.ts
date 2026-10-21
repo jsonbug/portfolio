@@ -1,6 +1,6 @@
 import type { Progress, PublishStatus } from './enums'
 import type { Link } from './link'
-import type { NoteSummary } from './note'
+import type { NoteSummary, AdminNoteSummary } from './note'
 
 /** 自定义元数据（KV）：按 `sort` 升序渲染，键名在同一项目内唯一。 */
 export interface MetadataItem {
@@ -51,8 +51,9 @@ export interface AdminProjectListItem extends ProjectListItem {
   deleted_at: string | null
 }
 
-/** 后台详情：含草稿笔记与封面原图。 */
-export interface AdminProjectDetail extends ProjectDetail {
+/** 后台项目详情：含草稿笔记与封面原图。 */
+export interface AdminProjectDetail extends Omit<ProjectDetail, 'notes'> {
+  notes: AdminNoteSummary[]
   publish_status: PublishStatus
   published_at: string | null
   cover_source_url: string | null

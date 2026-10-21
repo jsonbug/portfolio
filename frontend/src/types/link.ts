@@ -7,7 +7,7 @@ export interface Link {
   label: string | null
   url: string
   sort: number
-  last_status: LinkStatus | null
+  last_status: LinkStatus
   last_http_status: number | null
   last_checked_at: string | null
   created_at: string

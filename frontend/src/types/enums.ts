@@ -35,10 +35,11 @@ export const LinkType = {
 export type LinkType = (typeof LinkType)[keyof typeof LinkType]
 
 /** 链接健康检查结果（只读，由后端检查任务写入）。 */
+/** 链接健康检查结论：`unknown` = 从未检查（库里是 null，wire 上不出现 null）。 */
 export const LinkStatus = {
   ok: 'ok',
-  timeout: 'timeout',
-  error: 'error',
+  failed: 'failed',
+  unknown: 'unknown',
 } as const
 export type LinkStatus = (typeof LinkStatus)[keyof typeof LinkStatus]
 

@@ -16,6 +16,11 @@ export function updateLink(id: string, input: LinkUpdate): Promise<Link> {
   })
 }
 
+/** 立即重检（同步，最长约 8s）——后台「重检」按钮用。 */
+export function checkLink(id: string): Promise<Link> {
+  return request<Link>(`/admin/links/${encodeURIComponent(id)}/check`, { method: 'POST' })
+}
+
 export function deleteLink(id: string): Promise<void> {
   return request<void>(`/admin/links/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
