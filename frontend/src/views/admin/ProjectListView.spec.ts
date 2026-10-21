@@ -100,6 +100,22 @@ describe('ProjectListView', () => {
     expect(within(row).getByRole('link', { name: '官网（新窗口打开）' })).toBeInTheDocument()
   })
 
+  it('四段顺序为 全部 / 草稿 / 已发布 / 已归档，计数取自后台 counts', async () => {
+    renderList()
+    await screen.findByText('项目展示平台')
+    const group = screen.getByRole('group', { name: '按发布状态筛选' })
+    const labels = within(group)
+      .getAllByRole('button')
+      .map((btn) => btn.textContent?.replace(/\s+/g, '') ?? '')
+    // 种子：6 个项目 = 全部 6 / 草稿 1 / 已发布 4 / 已归档 1
+    expect(labels).toEqual(['全部6', '草稿1', '已发布4', '已归档1'])
+    // 默认选中「全部」
+    expect(within(group).getByRole('button', { name: '全部 6' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+  })
+
   it('分段带计数，点击「草稿」只留草稿（计数不随分段变化）', async () => {
     renderList()
     await screen.findByText('项目展示平台')
