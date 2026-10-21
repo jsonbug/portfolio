@@ -1,6 +1,6 @@
 # API 契约（冻结 · v1.2）
 
-> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1；v1.2.2 补链接健康检查 §4.4 与两套 counts 对称口径；v1.2.3 补分页越界、`details[].code`、`NoteSummary.excerpt` 三处条文，见 1.4）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
+> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1；v1.2.2 补链接健康检查 §4.4 与两套 counts 对称口径；v1.2.3 补分页越界、`details[].code`、`NoteSummary.excerpt` 三处条文，见 1.4；v1.2.4 把信封层 `error.code` 值域归位到 1.3 并校正 1.4 第 2 条的 `code` 来源措辞）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
 > 代码参考（可执行形态）：`backend/src/contract/schemas.ts`；本文档与 `schemas.ts` 是同一契约的两种载体，
 > 任何改动都是契约变更，需在 issue 中说明。
 >
@@ -46,9 +46,19 @@
 }
 ```
 
-> `details[].code` 透传 zod issue code，**不承诺稳定，客户端不得分支** —— 见 1.4 第 2 条。
+> `details[].code` 的来源与「不得依赖」口径见 1.4 第 2 条；**信封层 `error.code` 相反，是客户端唯一允许分支的字段，值域以 1.3 为唯一出处**。
+
+**信封层 `error.code` 值域（v1.2.4 冻结）**
+
+- 取值只能是 **1.3 表里的 8 个之一**。本节不重复枚举，**1.3 是值域的唯一出处**；新增或删除任何 code 都是契约变更。
+- 客户端**只允许**对 `error.code` 分支；出现值域外的 `code` 视为契约违约，客户端按通用错误处理、只展示 `message`，不得静默当作成功。
+- `code` 与 HTTP 状态必须符合 1.3 的映射；两者不一致时**以 `code` 为准**（例：同样是 400，客户端要靠 `code` 区分 `VALIDATION_ERROR` 与 `INVALID_STATUS_TRANSITION`）。
 
 ### 1.3 错误码与 HTTP 状态（冻结）
+
+本节是**信封层 `error.code` 值域的唯一出处**（v1.2.4 明确）：**8 个取值全部冻结**，实现侧对应 `backend/src/lib/errors.ts` 的 `ErrorCode` 联合类型与 `errorStatusMap`，两处一致才视为契约未漂。
+
+> 实现现状：`FORBIDDEN` 当前无业务路径产生（单管理员模型，保留位）；`METHOD_NOT_ALLOWED` 由框架 405 兜底产生（`backend/src/app.ts` 错误处理器），业务代码不主动抛。
 
 | code | HTTP | 触发场景 |
 |---|---|---|
@@ -79,7 +89,8 @@
 **2. `details[]`：结构保留，`code` 不承诺稳定**
 
 - `details[]` 结构保留（`field` / `code` / `message`）。
-- `code` 透传 zod issue code，**不承诺稳定，客户端不得分支**（`$ grep` 可验）。
+- `code` 的来源有两类：**zod issue code**（如 `too_big` / `invalid_type`）与**非 zod 路径手写的实现标识**（如 409 的 `conflict`、400 的 `invalid_transition`）。两类都**不承诺稳定，客户端不得分支**（`$ grep` 可验）。
+- 因此不得把「`code` 等于某个具体值」写进 mock、测试断言或组件分支（v1.2.4 校正：原措辞「透传 zod issue code」与实现不符，409/状态迁移两处详情是手写标识，见 `backend/src/routes/admin/projects.ts` 与 `admin/notes.ts`）。
 - 客户端只允许依赖封套的 `error.code`（见 1.3）判类型；`details[].message` 仅用于直接展示，不参与任何分支判断。
 
 **3. `excerpt`：`NoteSummary` 必带字段**
@@ -398,3 +409,4 @@ IPv4 映射（`::ffff:`）、NAT64、6to4 里嵌入的 IPv4 同样按上述规�
 | v1.2.1 | ALICE-8 冻结核对：后台 `counts`、后台详情笔记 `publish_status`、排序空值、search 字段、login 公开性、slug 命名空间、snake_case、Markdown 责任；补预留端点表 |
 | v1.2.2 | B16 链接健康检查落地：`last_status` 改为 `ok`/`failed`/`unknown`（原 `null` 不再出现）、判定与超时口径、SSRF 防护、`POST /admin/links/:id/check`（见 4.4）；两套 `counts` 对称口径写明；`/notes` 超 100 篇截断提示 |
 | v1.2.3 | 补三处此前只有实现没有条文的细节（见 1.4）：① 分页 `page > totalPages` 返回 200 + `items: []` + 真 `total` / `totalPages`，格式与范围错误仍 400；② `details[]` 结构保留、`code` 透传 zod issue code 且不承诺稳定、客户端不得分支；③ `NoteSummary.excerpt`（去 Markdown 取前 120 字、超长加省略号、空正文 `null`）为必带字段 |
+| v1.2.4 | 信封层 `error.code` 值域归位：1.3 明确为唯一出处且 8 个值全冻结（FORBIDDEN 为保留位、METHOD_NOT_ALLOWED 由框架 405 产生），1.2 增加值域段并规定「只允许对 `error.code` 分支、`code` 与状态冲突时以 `code` 为准」；同时校正 1.4 第 2 条的 `code` 来源措辞——不限于 zod issue code，`conflict` / `invalid_transition` 等手写标识同样存在且同样不得依赖 |
