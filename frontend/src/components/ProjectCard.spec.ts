@@ -44,15 +44,16 @@ describe('ProjectCard', () => {
 
     // failed：低对比 + ⚠ + title 说明；仍可点
     renderCard({ ...baseItem, links: [link('l1', 'repo', 'failed'), link('l2', 'site', 'unknown')] })
-    const failedRepo = screen.getByRole('link', { name: '仓库 · 演示项目（新窗口打开，链接检查失败）' })
-    expect(failedRepo.className).toContain('card-link--failed')
+    const failedRepo = screen.getByRole('link', { name: '源码仓库 · 演示项目（新窗口打开，链接检查失败）' })
+    expect(failedRepo.className).toContain('card-icon-btn--failed')
     expect(failedRepo).toHaveAttribute('title', '链接检查失败，仍可尝试打开')
     expect(within(failedRepo).getByText('⚠')).toBeInTheDocument()
 
     // unknown（从未检查）：不降级，可访问名也不带失败说明
     const unknownSite = screen.getByRole('link', { name: '官网 · 演示项目（新窗口打开）' })
-    expect(unknownSite.className).not.toContain('card-link--failed')
-    expect(unknownSite).not.toHaveAttribute('title')
+    expect(unknownSite.className).not.toContain('card-icon-btn--failed')
+    // 未检查过的链接也要有 tooltip，但只写类型名，不带任何「失败」措辞
+    expect(unknownSite).toHaveAttribute('title', '官网')
     expect(within(unknownSite).queryByText('⚠')).toBeNull()
   })
 
@@ -69,8 +70,8 @@ describe('ProjectCard', () => {
       created_at: '2026-01-01T00:00:00.000Z',
     }
     renderCard({ ...baseItem, links: [okLink] })
-    const repo = screen.getByRole('link', { name: '仓库 · 演示项目（新窗口打开）' })
-    expect(repo.className).not.toContain('card-link--failed')
+    const repo = screen.getByRole('link', { name: '源码仓库 · 演示项目（新窗口打开）' })
+    expect(repo.className).not.toContain('card-icon-btn--failed')
     expect(within(repo).queryByText('⚠')).toBeNull()
   })
 
@@ -137,10 +138,10 @@ describe('ProjectCard', () => {
     })
 
     // failed 链接仍可点，但可访问名里补了失败说明（F9 只降级 failed）
-    const repo = screen.getByRole('link', { name: '仓库 · 演示项目（新窗口打开，链接检查失败）' })
+    const repo = screen.getByRole('link', { name: '源码仓库 · 演示项目（新窗口打开，链接检查失败）' })
     expect(repo).toHaveAttribute('target', '_blank')
     expect(repo).toHaveAttribute('rel', 'noopener noreferrer')
     const card = screen.getByRole('article')
-    expect(within(card).getByText('★ 7')).toBeInTheDocument()
+    expect(within(card).getByText(/★ 7/)).toBeInTheDocument()
   })
 })

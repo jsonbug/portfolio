@@ -55,7 +55,7 @@ describe('设计令牌', () => {
       expect(token('--c-primary-strong')).toBe('#1e36a0')
       expect(token('--c-primary-soft')).toBe('#edf0fe')
       expect(token('--c-accent')).toBe('#b84a22')
-      expect(token('--c-accent-soft')).toBe('#fbe0e6')
+      expect(token('--c-accent-soft')).toBe('#fbede6') /* 走查 #25：粉 → 桃 */
     })
 
     it('中性色阶含输入框描边与已归档专用色', () => {
@@ -66,6 +66,8 @@ describe('设计令牌', () => {
       expect(token('--c-control-border')).toBe('#d6d1c8')
       expect(token('--c-fill')).toBe('#f4f2ee')
       expect(token('--c-surface')).toBe('#ffffff')
+      /* 走查 #26：页面底 Paper 与卡片分开，否则层次塌陷 */
+      expect(token('--c-page')).toBe('#fbfaf8')
       expect(token('--c-neutral-badge-bg')).toBe('#f1efec')
       // D6：已归档徽标文字色指定 #6E6862，保留实心方块形状
       expect(token('--c-neutral-badge-text')).toBe('#6e6862')
@@ -202,7 +204,31 @@ describe('设计令牌', () => {
     })
   })
 
-  describe('字体', () => {
+  describe('徽标对比度（走查 #5 / 硬要求①）', () => {
+  /* 徽标是状态双编码的一半：形状之外，字必须读得清 —— 每对「字色 / 底色」都在这里钉死 */
+  const pairs: Array<[string, string, string]> = [
+    ['已上线 check', '--c-success', '--c-success-soft'],
+    ['进行中 half', '--c-warning', '--c-warning-soft'],
+    ['已发布 dot', '--c-text', '--c-published-badge-bg'],
+    ['草稿 虚线环', '--c-text-secondary', '--c-surface'],
+    ['已归档 square', '--c-neutral-badge-text', '--c-neutral-badge-bg'],
+    ['危险 dot', '--c-danger', '--c-danger-soft'],
+    ['主色 dot', '--c-primary-strong', '--c-primary-soft'],
+    ['提示块', '--c-accent', '--c-accent-soft'],
+  ]
+
+  for (const [label, fg, bg] of pairs) {
+    it(`${label}：${fg} on ${bg} ≥ 4.5:1（AA 正文）`, () => {
+      expect(contrast(token(fg), token(bg))).toBeGreaterThanOrEqual(4.5)
+    })
+  }
+
+  it('页面底上的正文对比度仍达标（Paper 底不拖累可读性）', () => {
+    expect(contrast(token('--c-text'), token('--c-page'))).toBeGreaterThanOrEqual(4.5)
+  })
+})
+
+describe('字体', () => {
     it('中文走 HarmonyOS Sans SC，等宽独立', () => {
       expect(token('--font-sans')).toContain('HarmonyOS Sans SC')
       expect(token('--font-mono')).toContain('DejaVu Sans Mono')

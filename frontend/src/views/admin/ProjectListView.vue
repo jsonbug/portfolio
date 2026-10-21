@@ -884,16 +884,23 @@ onMounted(() => void load())
 .pager-btn {
   min-width: 32px;
   min-height: 32px;
-  font-size: var(--fs-mono);
+  padding: 0 var(--space-8);
+  font-family: var(--font-mono);
+  /* 12px 的页码在白底上偏小，后台表尾用 13px 更稳 */
+  font-size: 13px;
+  line-height: 1;
   color: var(--c-text);
   background: var(--c-fill);
-  border: none;
+  border: 1px solid transparent;
   border-radius: var(--r-tag);
   cursor: pointer;
 }
+.pager-btn:hover {
+  border-color: var(--c-control-border);
+}
 .pager-btn--active {
   color: var(--c-surface);
-  background: var(--c-ink);
+  background: var(--c-primary-strong);
 }
 
 .visibility {

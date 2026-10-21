@@ -4,6 +4,7 @@ import {
   clampSearch,
   daysAgo,
   formatDate,
+  formatRelativeDay,
   formatShortDate,
   readingTimeMinutes,
   truncate,
@@ -95,5 +96,24 @@ describe('clampSearch', () => {
       expect(formatShortDate(null, now)).toBe('')
       expect(formatShortDate('not-a-date', now)).toBe('')
     })
+  })
+})
+
+describe('formatRelativeDay（走查 #4：卡片底栏相对时间）', () => {
+  const now = Date.parse('2026-10-21T12:00:00.000Z')
+
+  it('今天 / 昨天 / N 天前', () => {
+    expect(formatRelativeDay('2026-10-21T09:00:00.000Z', now)).toBe('今天')
+    expect(formatRelativeDay('2026-10-20T09:00:00.000Z', now)).toBe('昨天')
+    expect(formatRelativeDay('2026-10-18T09:00:00.000Z', now)).toBe('3 天前')
+  })
+
+  it('超过 30 天回到 MM-DD（「87 天前」不如日期好读）', () => {
+    expect(formatRelativeDay('2026-08-01T09:00:00.000Z', now)).toBe('08-01')
+  })
+
+  it('空值与非法值返回空串', () => {
+    expect(formatRelativeDay(null, now)).toBe('')
+    expect(formatRelativeDay('not-a-date', now)).toBe('')
   })
 })

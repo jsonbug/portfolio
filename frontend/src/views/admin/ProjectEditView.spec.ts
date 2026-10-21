@@ -34,6 +34,14 @@ async function renderEditor(id?: string): Promise<{ router: Router }> {
   return { router }
 }
 
+/** B2：元数据 / 自定义元数据两分区默认折叠，交互前先展开。 */
+async function expandSection(name: string): Promise<void> {
+  const section = within(await screen.findByRole('region', { name }))
+  const toggle = section.queryByRole('button', { name: '展开' })
+  if (toggle) await fireEvent.click(toggle)
+  await waitFor(() => expect(section.queryByRole('button', { name: '收起' })).not.toBeNull())
+}
+
 const screenshotsSection = () => screen.getByRole('region', { name: '截图' })
 const metadataSection = () => screen.getByRole('region', { name: '自定义元数据' })
 
@@ -98,6 +106,7 @@ describe('ProjectEditView · 截图与元数据 kind（契约 4.1.1）', () => {
 
   it('指标卡到上限就在界面禁用「添加指标卡」，不等后端 400', async () => {
     await renderEditor('proj_portfolio')
+    await expandSection('自定义元数据')
     const section = within(await screen.findByRole('region', { name: '自定义元数据' }))
 
     // 种子 portfolio 已有 2 条 metric，正好到上限
@@ -107,6 +116,7 @@ describe('ProjectEditView · 截图与元数据 kind（契约 4.1.1）', () => {
 
   it('元数据行可切成指标卡，且长度上限随类型收紧', async () => {
     await renderEditor('proj_portfolio')
+    await expandSection('自定义元数据')
     const section = within(await screen.findByRole('region', { name: '自定义元数据' }))
     const kindSelect = (await section.findByLabelText('第 1 条类型')) as HTMLSelectElement
 
@@ -125,6 +135,22 @@ describe('ProjectEditView · 截图与元数据 kind（契约 4.1.1）', () => {
 
     const rows = getMockDb().metadata.filter((m) => m.project_id === 'proj_portfolio')
     expect(rows.find((m) => m.key_label === '代码行数')?.kind).toBe('metric')
+  })
+
+  it('两个大分区默认折叠，简介带建议文案与实时字数', async () => {
+    await renderEditor('proj_portfolio')
+
+    for (const name of ['元数据', '自定义元数据']) {
+      const section = within(await screen.findByRole('region', { name }))
+      expect(section.getByRole('button', { name: '展开' })).toHaveAttribute('aria-expanded', 'false')
+    }
+
+    await expandSection('元数据')
+    const meta = within(screen.getByRole('region', { name: '元数据' }))
+    expect(meta.getByText('建议 40–60 字，列表只显示 2 行，超出截断')).toBeInTheDocument()
+    const summary = meta.getByLabelText('一句话简介') as HTMLInputElement
+    await fireEvent.update(summary, '十二个字的一句话简介')
+    expect(meta.getByText(`${summary.value.length}/60`)).toBeInTheDocument()
   })
 
   it('新建项目时不显示截图与元数据编辑区（先创建再补内容）', async () => {

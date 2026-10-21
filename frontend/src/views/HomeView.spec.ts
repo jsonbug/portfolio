@@ -72,12 +72,13 @@ describe('HomeView 列表', () => {
     const card = screen.getByRole('link', { name: '项目展示平台' }).closest('article')
     expect(card).not.toBeNull()
     const scope = within(card as HTMLElement)
-    expect(scope.getByText('★ 128')).toBeInTheDocument()
-    expect(scope.getByText(/更新$/)).toBeInTheDocument()
+    expect(scope.getByText(/★ 128/)).toBeInTheDocument()
+    // 走查 #4：底栏是「★ 128 · 2 天前」，不再是绝对日期
+    expect(scope.getByText(/· \d+ 天前|· 今天|· 昨天/)).toBeInTheDocument()
     expect(scope.getByText('进行中')).toBeInTheDocument()
     expect(scope.getByText('把散落在收藏夹里的项目收进一个可检索、可记笔记的展示站。')).toBeInTheDocument()
     // 外部入口可访问名带项目名 + 新窗口提示
-    expect(scope.getByRole('link', { name: '仓库 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
+    expect(scope.getByRole('link', { name: '源码仓库 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
       'href',
       'https://github.com/jsonbug/portfolio',
     )
@@ -166,13 +167,13 @@ describe('HomeView 搜索', () => {
     expect(cardNames()).toEqual(['抓取工具箱'])
   })
 
-  it('无结果时展示空态并可一键清除筛选', async () => {
+  it('无结果时展示空态：把搜索词念回去，并可一键清除全部筛选（走查 #29）', async () => {
     const { router } = await renderHome('/?q=不存在的项目')
-    const empty = (await screen.findByText('没有符合条件的项目')).closest('.empty') as HTMLElement
+    const empty = (await screen.findByText('「不存在的项目」没有匹配项目')).closest('.empty') as HTMLElement
     expect(empty).not.toBeNull()
     expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()
 
-    await fireEvent.click(within(empty).getByRole('button', { name: '清除筛选' }))
+    await fireEvent.click(within(empty).getByRole('button', { name: '清除全部筛选' }))
 
     await waitFor(() => expect(cardNames().sort()).toEqual([...CARD_NAMES].sort()))
     expect(router.currentRoute.value.query).toEqual({})

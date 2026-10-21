@@ -113,7 +113,7 @@ function clearFilters(): void {
 </script>
 
 <template>
-  <main class="home">
+  <main class="home page">
     <header class="home-header">
       <h1 class="type-display">项目</h1>
       <p v-if="!showSkeleton && total > 0" class="home-summary">
@@ -141,11 +141,16 @@ function clearFilters(): void {
 
     <ProjectCardSkeleton v-if="showSkeleton" />
 
-    <ProjectEmptyState v-else-if="showEmpty" :filtered="filtered" @clear="clearFilters" />
+    <ProjectEmptyState
+      v-else-if="showEmpty"
+      :filtered="filtered"
+      :query="filters.q"
+      @clear="clearFilters"
+    />
 
     <template v-else>
       <ul class="grid" :aria-busy="loading">
-        <li v-for="item in items" :key="item.id">
+        <li v-for="item in items" :key="item.id" class="grid-item">
           <ProjectCard :item="item" />
         </li>
       </ul>
@@ -190,6 +195,10 @@ function clearFilters(): void {
   line-height: var(--lh-small);
   color: var(--c-text-secondary);
   text-align: center;
+}
+.grid-item {
+  display: flex;
+  min-width: 0;
 }
 .grid {
   list-style: none;

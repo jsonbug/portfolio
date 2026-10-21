@@ -1,19 +1,26 @@
 <script setup lang="ts">
 /**
- * 列表空态：区分「确实没有项目」与「筛选后无结果」两种语义，
- * 后者给出「清除筛选」出口，避免用户卡在空页面上。
+ * 列表空态（走查 #29）：区分「确实没有项目」与「筛选后无结果」两种语义。
+ *
+ * 筛空时把搜索词念回去（`「rust 波形」没有匹配项目`）——比「没有符合条件的项目」更能说明
+ * 是哪一步筛没的；入口文案也统一成「清除全部筛选」，因为它同时清空搜索词与技术栈。
  */
-defineProps<{ filtered: boolean }>()
+const props = defineProps<{ filtered: boolean; query?: string }>()
 const emit = defineEmits<{ clear: [] }>()
+
+const title = () =>
+  props.filtered ? (props.query ? `「${props.query}」没有匹配项目` : '没有匹配的项目') : '还没有发布的项目'
 </script>
 
 <template>
   <div class="empty">
-    <p class="empty-title">{{ filtered ? '没有符合条件的项目' : '还没有项目' }}</p>
+    <p class="empty-title">{{ title() }}</p>
     <p class="empty-hint">
-      {{ filtered ? '试试换个关键词，或放宽技术栈筛选。' : '项目上线后会显示在这里。' }}
+      {{ filtered ? '换个关键词，或放宽技术栈筛选。' : '仅『已发布』可见。' }}
     </p>
-    <button v-if="filtered" type="button" class="btn btn-sm" @click="emit('clear')">清除筛选</button>
+    <button v-if="filtered" type="button" class="btn btn-sm" @click="emit('clear')">
+      清除全部筛选
+    </button>
   </div>
 </template>
 

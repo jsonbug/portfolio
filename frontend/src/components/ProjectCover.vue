@@ -1,21 +1,14 @@
 <script setup lang="ts">
 import { safeHttpUrl } from '@/utils/link'
 import { computed, ref, watch } from 'vue'
-import {
-  averageLuminance,
-  firstLetter,
-  gradientFor,
-  luminanceFilter,
-  luminanceTier,
-  type LuminanceTier,
-} from '@/utils/cover'
+import { COVER_RADIUS, FALLBACK_LETTER_COLOR, firstLetter, isLongImage } from '@/utils/cover'
 
 /**
- * 项目封面：按 cover-spec 渲染。
- * - 有 coverImage：等比铺满裁切（card 锚点 y=30% → 保留源图 14%–67%），
- *   运行时 canvas 采样平均亮度分档施加滤镜，跨域失败回退 normal。
- * - 无 coverImage 或加载失败：hash 加权渐层兜底 + 项目名首字母。
- * - 统一 1px 内描边（rgba(#141100, 8%)）。
+ * 项目封面（设计稿 07 / D4 专项）：
+ * - 有 coverImage：`object-fit: cover` 铺满，**不调色、不投影、不滤镜**，只加 1px 内描边；
+ *   长图（高/宽 > 1.2）顶部对齐裁切，并在右下角出「长图 · 点击查看原图」角标。
+ * - 无 coverImage 或加载失败：首字 + `#B4AEA5` + 16px 网格底，**不按名称/ID 生成彩色块**。
+ * - 圆角 6px（与卡片的 12px 分开），描边 `inset 0 0 0 1px #E6E2DB`。
  */
 const props = withDefaults(
   defineProps<{
@@ -27,36 +20,16 @@ const props = withDefaults(
 )
 
 const failed = ref(false)
-const tier = ref<LuminanceTier>('normal')
+const long = ref(false)
 
-const gradient = computed(() => gradientFor(props.name))
 const letter = computed(() => firstLetter(props.name))
-const fallbackStyle = computed(() => ({
-  background: `linear-gradient(135deg, ${gradient.value.from}, ${gradient.value.to})`,
-}))
-const filterStyle = computed(() => luminanceFilter(tier.value))
 const safeCover = computed(() => safeHttpUrl(props.coverImage))
-// 只有白名单内的地址才渲染 <img>：非法地址（javascript: 等）直接走渐变兜底
+// 只有白名单内的地址才渲染 <img>：非法地址（javascript: 等）直接走首字兜底
 const showImage = computed(() => safeCover.value != null && !failed.value)
 
-function sampleLuminance(img: HTMLImageElement): LuminanceTier {
-  try {
-    const size = 16
-    const canvas = document.createElement('canvas')
-    canvas.width = size
-    canvas.height = size
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })
-    if (!ctx) return 'normal'
-    ctx.drawImage(img, 0, 0, size, size)
-    return luminanceTier(averageLuminance(ctx.getImageData(0, 0, size, size).data))
-  } catch {
-    // 跨域污染或环境无 canvas：按正常档处理。
-    return 'normal'
-  }
-}
-
 function onLoad(event: Event): void {
-  tier.value = sampleLuminance(event.target as HTMLImageElement)
+  const img = event.target as HTMLImageElement
+  long.value = isLongImage(img.naturalWidth, img.naturalHeight)
 }
 
 function onError(): void {
@@ -67,7 +40,7 @@ watch(
   () => props.coverImage,
   () => {
     failed.value = false
-    tier.value = 'normal'
+    long.value = false
   },
 )
 </script>
@@ -75,7 +48,8 @@ watch(
 <template>
   <div
     class="cover"
-    :class="[`cover--${variant}`, `cover--${tier}`]"
+    :class="[`cover--${variant}`, { 'cover--long': showImage && long }]"
+    :style="{ '--cover-radius': `${COVER_RADIUS}px` }"
     role="img"
     :aria-label="`${name} 封面`"
   >
@@ -83,16 +57,15 @@ watch(
       v-if="showImage"
       class="cover-img"
       :src="safeCover ?? undefined"
-      :style="{ filter: filterStyle }"
       alt=""
       loading="lazy"
       @load="onLoad"
       @error="onError"
     />
-    <div v-else class="cover-fallback" :style="fallbackStyle">
-      <span class="cover-letter">{{ letter }}</span>
+    <div v-else class="cover-fallback">
+      <span class="cover-letter" :style="{ color: FALLBACK_LETTER_COLOR }">{{ letter }}</span>
     </div>
-    <span v-if="showImage && tier === 'dark'" class="cover-wash" aria-hidden="true" />
+    <span v-if="showImage && long" class="cover-long-mark" aria-hidden="true">长图 · 点击查看原图</span>
   </div>
 </template>
 
@@ -101,13 +74,13 @@ watch(
   position: relative;
   overflow: hidden;
   width: 100%;
-  background: var(--c-fill);
-  /* 1px 内描边 rgba(#141100, 8%) */
-  box-shadow: inset 0 0 0 1px rgba(20, 17, 13, 0.08);
+  background: var(--c-surface);
+  border-radius: var(--cover-radius);
+  /* 07 稿：只加 1px 内描边，不投影 */
+  box-shadow: inset 0 0 0 1px var(--c-border);
 }
 .cover--card {
-  aspect-ratio: 442 / 132; /* 3.35:1 */
-  border-radius: var(--r-card);
+  aspect-ratio: 442 / 132; /* 3.35:1，效果图测量值 */
 }
 .cover--hero {
   aspect-ratio: 16 / 9;
@@ -122,13 +95,11 @@ watch(
   width: 100%;
   height: 100%;
   object-fit: cover; /* 等比铺满裁切，禁拉伸/letterbox */
-}
-.cover--card .cover-img {
-  object-position: 50% 30%; /* 锚点 y=30% → 保留源图 14%–67% */
-}
-.cover--hero .cover-img,
-.cover--thumb .cover-img {
   object-position: 50% 50%;
+}
+/* 长图：顶部对齐，先给标题区看 */
+.cover--long .cover-img {
+  object-position: 50% 0;
 }
 .cover-fallback {
   display: flex;
@@ -136,21 +107,35 @@ watch(
   justify-content: center;
   width: 100%;
   height: 100%;
+  /* 16px 网格底（07 稿），用两条 1px 渐变线拼出来，不额外引入图片 */
+  background-image:
+    linear-gradient(to right, var(--c-border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--c-border) 1px, transparent 1px);
+  background-size: 16px 16px;
+  background-position: -1px -1px;
+  background-color: var(--c-page);
 }
 .cover-letter {
-  font-size: 40px;
-  font-weight: 600;
+  font-size: 38px;
+  font-weight: var(--fw-semibold);
   line-height: 1;
-  color: rgba(255, 255, 255, 0.92); /* 白 92% */
+  user-select: none;
+}
+.cover--hero .cover-letter {
+  font-size: 56px;
 }
 .cover--thumb .cover-letter {
   font-size: 16px;
 }
-/* 暗图白色柔光膜（4%），避免滤镜后过沉 */
-.cover-wash {
+.cover-long-mark {
   position: absolute;
-  inset: 0;
-  background: rgba(255, 255, 255, 0.04);
-  pointer-events: none;
+  right: var(--space-8);
+  bottom: var(--space-8);
+  padding: 2px var(--space-8);
+  border-radius: var(--r-tag);
+  background: rgba(20, 17, 13, 0.72);
+  color: #fff;
+  font-size: var(--fs-mono);
+  line-height: var(--lh-mono);
 }
 </style>
