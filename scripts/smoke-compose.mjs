@@ -15,6 +15,11 @@
  *            （默认不跑：离线/内网环境不该因为出网失败而红）
  *   --keep-data 跑完不软删自己建的项目（默认会软删，避免在被复用的库上累积脏数据）
  *
+ * 关于「脏数据」：默认那句「软删」是**置 deleted_at**，行还在——每跑一次，库里的项目/笔记/链接/
+ * 元数据/截图各 +N 行，只是不再出现在任何列表里。所以反复跑不会把功能跑坏，但会持续堆行；
+ * 介意的话就用一次性库（`docker compose down -v` 后重建）。不做硬删：脚本手里是管理员 token，
+ * 一次误配就是不可逆的数据删除。
+ *
  * 外网请求：脚本**自己**不发任何外网请求。但后端的建链接自动检查默认开启
  * （lib/link-check.ts:251，NODE_ENV=test 或 LINK_CHECK_ENABLED=0 时关闭），所以
  * **起服务时**要显式 `LINK_CHECK_ENABLED=0`，否则建链接那一刻后端会真的去连一次外网，
@@ -285,7 +290,7 @@ const draftNote = await req('POST', '/admin/notes', {
 });
 const draftNoteId = draftNote.data?.id;
 const notesAfterDraft = await req('GET', '/notes', { expect: 200 });
-check('草稿笔记不出现在前台 /notes', !(items(notesAfterDraft) ?? []).some((n) => n.slug === `${SLUG}-note-draft`), `slugs=${JSON.stringify((items(notesAfterDraft) ?? []).map((n) => n.slug))}`);
+check('草稿笔记不出现在前台 /notes', items(notesAfterDraft).length > 0 && !(items(notesAfterDraft) ?? []).some((n) => n.slug === `${SLUG}-note-draft`), `slugs=${JSON.stringify((items(notesAfterDraft) ?? []).map((n) => n.slug))}`);
 await req('GET', `/notes/${SLUG}-note-draft`, { expect: 404 });
 
 // ---- 8. 过滤 / 排序：断言「真的生效」，不是只断言 200 ----

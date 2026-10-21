@@ -56,6 +56,11 @@ jobs:
         run: npm ci
 
       - name: Prisma schema 校验
+        # DATABASE_URL 是 prisma 校验的必需输入（schema.prisma 的 datasource 读了它）。
+        # 漏了这行 → `npx prisma validate` 直接报 P1012/环境变量缺失，backend job 从第一次 run 就没绿过。
+        # 用独立文件名：与 contract job 的 ci-contract.db 分开，避免并行 run 或同一 run 内互相撞锁。
+        env:
+          DATABASE_URL: file:./ci-validate.db
         run: npx prisma validate
 
       - name: 类型检查
