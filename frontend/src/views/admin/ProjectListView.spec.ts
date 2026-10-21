@@ -63,16 +63,61 @@ describe('ProjectListView', () => {
     expect(within(await findRow('被软删的工具')).getByText('已删除')).toBeInTheDocument()
   })
 
-  it('按曝光状态筛选只留对应项目', async () => {
+  it('七数据列齐全：名称 / slug / 发布状态 / 进展 / 链接 / 更新时间 / 操作', async () => {
     renderList()
     await screen.findByText('项目展示平台')
-    await fireEvent.update(screen.getByLabelText('状态'), 'draft')
-    await fireEvent.click(screen.getByRole('button', { name: '筛选' }))
+    const headers = screen.getAllByRole('columnheader').map((th) => th.textContent?.trim())
+    // 复选框是工具列，不算 7 数据列
+    expect(headers).toEqual([
+      '',
+      '名称',
+      'slug',
+      '发布状态',
+      '进展',
+      '链接',
+      '更新时间',
+      '操作',
+    ])
+
+    const row = await findRow('项目展示平台')
+    expect(within(row).getByText('portfolio-platform')).toBeInTheDocument()
+    expect(within(row).getByRole('link', { name: '仓库（新窗口打开）' })).toBeInTheDocument()
+    expect(within(row).getByRole('link', { name: '官网（新窗口打开）' })).toBeInTheDocument()
+  })
+
+  it('分段带计数，点击「草稿」只留草稿（计数不随分段变化）', async () => {
+    renderList()
+    await screen.findByText('项目展示平台')
+
+    // 计数由后端 counts 给，与分段无关：切换分段后仍是同一个数
+    const draftSegment = () => screen.getByRole('button', { name: /^草稿 \d+$/ })
+    const before = draftSegment().textContent
+    await fireEvent.click(draftSegment())
 
     await waitFor(async () => {
       expect(await findRow('还没想好的东西')).toBeInTheDocument()
     })
     expect(screen.queryByText('Chart Kit')).not.toBeInTheDocument()
+    expect(draftSegment().textContent).toBe(before)
+    expect(screen.getByRole('button', { name: /^全部 \d+$/ })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(draftSegment()).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('链接列：检查失败的入口仍可见但降级（⚠ + 说明），unknown 不降级', async () => {
+    renderList()
+    const chart = await findRow('Chart Kit')
+    // 种子里 Chart Kit 的 docs 链接 last_status = failed
+    const failed = within(chart)
+      .getAllByTitle(/检查失败，可能已失效/)
+      .at(0)
+    expect(failed).toBeInTheDocument()
+
+    const portfolio = await findRow('项目展示平台')
+    const okEntry = within(portfolio).getByRole('link', { name: '仓库（新窗口打开）' })
+    expect(okEntry.className).not.toContain('entry--failed')
   })
 
   it('草稿项目提供「发布」操作，已发布项目提供「下架」', async () => {
