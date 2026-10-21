@@ -7,6 +7,7 @@ import ProjectCardSkeleton from '@/components/ProjectCardSkeleton.vue'
 import ProjectEmptyState from '@/components/ProjectEmptyState.vue'
 import ProjectFilterBar from '@/components/ProjectFilterBar.vue'
 import { LIST_PAGE_SIZE, useProjectList } from '@/composables/useProjectList'
+import { clampSearch } from '@/utils/text'
 import {
   DEFAULT_FILTERS,
   isDefaultFilters,
@@ -85,6 +86,7 @@ watch(
 )
 
 function apply(patch: Partial<ProjectListFilters>): void {
+  if (patch.q !== undefined) patch = { ...patch, q: clampSearch(patch.q) }
   // 基准取实时路由 query 解析出来的值（不是可能过期的 computed）；
   // `pending` 只用来补「replace 还没落定」的那段时间。
   const base = pending ?? parseFilters(router.currentRoute.value.query)
@@ -196,17 +198,6 @@ function clearFilters(): void {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: var(--card-gap);
-}
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
 }
 @media (min-width: 768px) {
   .grid {

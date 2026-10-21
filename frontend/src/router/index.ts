@@ -3,6 +3,15 @@ import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
+  /**
+   * 路由切换后回到顶部（列表翻页/详情之间跳转不该停在页面中段）；
+   * 带 hash 的导航（目录锚点）交给浏览器自己滚动。
+   */
+  scrollBehavior: (to, _from, savedPosition) => {
+    if (savedPosition) return savedPosition
+    if (to.hash) return {}
+    return { top: 0 }
+  },
   routes: [
     {
       path: '/',

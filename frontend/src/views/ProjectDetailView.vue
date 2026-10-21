@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { getPublicProject } from '@/api/projects'
 import ProjectCover from '@/components/ProjectCover.vue'
 import ProgressBadge from '@/components/ProgressBadge.vue'
-import { LINK_TYPE_LABELS, type ProjectDetail } from '@/types'
+import { LINK_TYPE_LABELS, PROGRESS_LABELS, type Link, type ProjectDetail } from '@/types'
 import { bareDomain, safeHttpUrl } from '@/utils/link'
 import { renderMarkdown } from '@/utils/markdown'
 import { formatDate } from '@/utils/text'
 
 const props = defineProps<{ slug: string }>()
+const router = useRouter()
 
 const detail = ref<ProjectDetail | null>(null)
 const loading = ref(true)
@@ -30,11 +32,52 @@ const metrics = computed(() => {
   return parts
 })
 
-/** 固定元数据列（空值整行不渲染）。 */
+/** 只取指定类型的第一条可用链接（用于 hero 主操作按钮）。 */
+function primaryLink(type: Link['type']): string | null {
+  const link = detail.value?.links.find((l) => l.type === type)
+  return link ? safeHttpUrl(link.url) : null
+}
+
+/** 失效链接的说明文案（title 与 aria-label 共用）。 */
+function failedHint(link: Link): string {
+  return link.last_http_status
+    ? `链接检查失败（HTTP ${link.last_http_status}），仍可尝试打开`
+    : '链接检查失败，仍可尝试打开'
+}
+
+/** 链接的可访问名：只在 failed 时补失败说明，其余类型不加噪音。 */
+function linkAriaLabel(link: Link): string {
+  const base = `${LINK_TYPE_LABELS[link.type]} · ${detail.value?.name ?? ''}（新窗口打开）`
+  return link.last_status === 'failed' ? `${base}，${failedHint(link)}` : base
+}
+
+/** 首页三个主操作：源码仓库 / 访问官网 / 查看笔记（与右栏「相关链接」清单并存）。 */
+const heroActions = computed(() => {
+  const item = detail.value
+  if (!item) return []
+  const actions: Array<{ key: string; label: string; href: string; external: boolean }> = []
+  const repo = primaryLink('repo')
+  const site = primaryLink('site')
+  if (repo) actions.push({ key: 'repo', label: '源码仓库', href: repo, external: true })
+  if (site) actions.push({ key: 'site', label: '访问官网', href: site, external: true })
+  if (item.notes.length) {
+    actions.push({ key: 'notes', label: '查看笔记', href: '#related-notes', external: false })
+  }
+  return actions
+})
+
+/**
+ * 元数据 panel 的固定行（空值整行不渲染）。
+ *
+ * 「发布状态」与「进展」在公开 payload 里只有 progress：公开接口按可见性过滤，
+ * 能出现在这里的项目一律是已发布，故发布状态固定渲染「已发布」（见评论中的假设记录）。
+ */
 const fixedMeta = computed(() => {
   const item = detail.value
   if (!item) return []
   return [
+    { label: '发布状态', value: '已发布' },
+    { label: '进展', value: PROGRESS_LABELS[item.progress] },
     { label: '角色', value: item.role ?? '' },
     { label: '开源协议', value: item.license ?? '' },
     { label: '起始年份', value: item.start_year != null ? String(item.start_year) : '' },
@@ -53,6 +96,10 @@ async function load() {
   error.value = ''
   try {
     detail.value = await getPublicProject(props.slug)
+    // 旧 slug 被 301 到规范 slug 后，把地址栏也换成规范地址，避免用户复制旧地址分享。
+    if (detail.value.slug !== props.slug) {
+      await router.replace({ name: 'project-detail', params: { slug: detail.value.slug } })
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -86,6 +133,27 @@ onMounted(() => void load())
               <span v-if="index > 0" class="metric-sep" aria-hidden="true">·</span>{{ part }}
             </span>
           </p>
+          <p v-if="heroActions.length" class="hero-actions">
+            <template v-for="(action, index) in heroActions" :key="action.key">
+              <a
+                v-if="action.external"
+                :href="action.href"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn"
+                :class="index === 0 ? 'btn-primary' : 'btn-ghost'"
+                :aria-label="`${action.label} · ${detail.name}（新窗口打开）`"
+                >{{ action.label }}</a
+              >
+              <a
+                v-else
+                :href="action.href"
+                class="btn btn-ghost"
+                :aria-label="`${action.label} · ${detail.name}（跳到本页笔记区）`"
+                >{{ action.label }}</a
+              >
+            </template>
+          </p>
         </div>
       </header>
 
@@ -96,18 +164,23 @@ onMounted(() => void load())
             <div class="markdown" v-html="descriptionHtml" />
           </section>
 
-          <section v-if="detail.notes.length" class="card section" aria-labelledby="notes-title">
+          <section v-if="detail.notes.length" id="related-notes" class="card section" aria-labelledby="notes-title">
             <h2 id="notes-title">相关笔记</h2>
             <ul class="note-list">
               <li v-for="note in detail.notes" :key="note.id" class="note-item">
-                <RouterLink :to="{ name: 'note-detail', params: { slug: note.slug } }" class="note-title">
-                  {{ note.title }}
-                </RouterLink>
                 <span v-if="note.published_at" class="note-date tabular-nums">{{
                   formatDate(note.published_at)
                 }}</span>
+                <RouterLink :to="{ name: 'note-detail', params: { slug: note.slug } }" class="note-title">
+                  {{ note.title }}
+                </RouterLink>
+                <p v-if="note.excerpt" class="note-excerpt type-small">{{ note.excerpt }}</p>
+                <ul v-if="note.tags.length" class="tags">
+                  <li v-for="tag in note.tags" :key="tag" class="tag">{{ tag }}</li>
+                </ul>
               </li>
             </ul>
+            <RouterLink :to="{ name: 'notes' }" class="note-all type-small">全部笔记 →</RouterLink>
           </section>
         </div>
 
@@ -141,15 +214,18 @@ onMounted(() => void load())
                   target="_blank"
                   rel="noopener noreferrer"
                   class="link-anchor"
-                  :aria-label="`${LINK_TYPE_LABELS[link.type]} · ${detail.name}（新窗口打开）`"
+                  :class="{ 'link-anchor--failed': link.last_status === 'failed' }"
+                  :title="link.last_status === 'failed' ? failedHint(link) : undefined"
+                  :aria-label="linkAriaLabel(link)"
                 >
                   <span class="link-type">{{ LINK_TYPE_LABELS[link.type] }}</span>
-                  <span class="link-label">{{ link.label || bareDomain(link.url) }}</span>
+                  <span class="link-label">
+                    <span v-if="link.last_status === 'failed'" class="link-warn" aria-hidden="true">⚠</span>
+                    {{ link.label || bareDomain(link.url) }}
+                  </span>
                   <span class="link-host type-small">
                     {{ bareDomain(link.url) }}
-                    <span v-if="link.last_status === 'failed'" class="link-failed">
-                      检查失败{{ link.last_http_status ? ` ${link.last_http_status}` : '' }}
-                    </span>
+                    <span v-if="link.last_status === 'failed'" class="link-failed">{{ failedHint(link) }}</span>
                   </span>
                 </a>
               </li>
@@ -216,6 +292,12 @@ onMounted(() => void load())
 .metrics {
   margin: 0;
   color: var(--c-text-secondary);
+}
+.hero-actions {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
 }
 .metric-sep {
   margin: 0 var(--space-8);
@@ -293,6 +375,19 @@ onMounted(() => void load())
   grid-column: 2;
   color: var(--c-text-secondary);
 }
+/* F9：只对 failed 降级（低对比 + 失效图标 + 文案），ok / unknown / null 一律同款 */
+.link-anchor--failed .link-label {
+  color: var(--c-text-secondary);
+}
+.link-anchor--failed .link-type,
+.link-anchor--failed .link-host {
+  color: var(--c-text-secondary);
+  opacity: 0.75;
+}
+.link-warn {
+  margin-right: 4px;
+  color: var(--c-danger);
+}
 .link-failed {
   color: var(--c-danger);
 }
@@ -344,10 +439,32 @@ onMounted(() => void load())
 }
 .note-item {
   display: flex;
-  justify-content: space-between;
-  gap: var(--space-16);
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-bottom: var(--space-12);
+  border-bottom: 1px solid var(--c-border);
   font-size: var(--fs-body);
   line-height: var(--lh-body);
+}
+.note-item:last-of-type {
+  border-bottom: none;
+}
+.note-excerpt {
+  margin: 0;
+  color: var(--c-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.note-all {
+  color: var(--c-primary-strong);
+  text-decoration: none;
+  align-self: flex-start;
+}
+.note-all:hover {
+  text-decoration: underline;
 }
 .note-title {
   color: var(--c-text);

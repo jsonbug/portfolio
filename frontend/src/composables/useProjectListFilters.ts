@@ -4,6 +4,7 @@
  */
 import type { LocationQueryRaw } from 'vue-router'
 import { PROGRESS_LABELS, type Progress, type ProjectSort } from '@/types'
+import { MAX_SEARCH_LENGTH, clampSearch } from '@/utils/text'
 
 export interface ProjectListFilters {
   /** 搜索词（匹配名称与简介）。 */
@@ -40,8 +41,11 @@ export const DEFAULT_FILTERS: ProjectListFilters = {
   sort: 'recent',
 }
 
-/** URL 侧收口（URL 是唯一真源，所以边界必须住在这个纯函数里，手改 URL 也挡得住）。 */
-export const MAX_QUERY_LENGTH = 200
+/**
+ * URL 侧收口（URL 是唯一真源，所以边界必须住在这个纯函数里，手改 URL 也挡得住）。
+ * 搜索词上限直接复用输入框同款 `clampSearch` 与常量，避免两处口径漂移。
+ */
+export const MAX_QUERY_LENGTH = MAX_SEARCH_LENGTH
 export const MAX_TECH_NAME_LENGTH = 50
 export const MAX_TECH_COUNT = 20
 
@@ -56,7 +60,7 @@ function asArray(value: LocationQueryRaw[string]): string[] {
 
 /** 解析 URL query；非法值静默忽略（不抛错、不阻塞首次渲染）。 */
 export function parseFilters(query: LocationQueryRaw): ProjectListFilters {
-  const q = asArray(query.q).join(' ').trim().slice(0, MAX_QUERY_LENGTH)
+  const q = clampSearch(asArray(query.q).join(' '))
   const tech = [
     ...new Set(
       asArray(query.tech)

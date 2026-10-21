@@ -113,3 +113,45 @@ describe('NotesView', () => {
     expect(await screen.findByText('仅显示最近 100 篇')).toBeInTheDocument()
   })
 })
+
+describe('NotesView · URL 唯一真源与选中态', () => {
+  beforeEach(() => resetMockDb())
+
+  it('首次进入没有 ?note= 时，把默认选中的第一篇写回地址栏', async () => {
+    const router = makeRouter()
+    await router.isReady()
+    render(NotesView, { global: { plugins: [router] } })
+
+    await screen.findByRole('navigation', { name: '笔记列表' })
+    await waitFor(() => expect(router.currentRoute.value.query.note).toBeTruthy())
+    // 地址栏里的 slug 与当前正文一致
+    const note = router.currentRoute.value.query.note as string
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent?.trim())).toContain('v1.2 改造笔记')
+    expect(note).toBe('v1-2-notes')
+  })
+
+  it('搜索收窄后保留选中，并在左栏提示「当前笔记不在筛选结果内」', async () => {
+    const router = makeRouter('/notes?note=v1-2-notes')
+    await router.isReady()
+    render(NotesView, { global: { plugins: [router] } })
+
+    await screen.findByRole('heading', { level: 2, name: 'v1.2 改造笔记' })
+    // 搜索收窄到 Chart Kit 的笔记：选中的 v1.2 改造笔记不在结果里
+    await fireEvent.update(screen.getByRole('searchbox', { name: '搜索笔记' }), 'Chart Kit 0.9')
+
+    await waitFor(() => expect(router.currentRoute.value.query.q).toBe('Chart Kit 0.9'))
+    expect(router.currentRoute.value.query.note).toBe('v1-2-notes')
+    expect(await screen.findByText('当前笔记不在筛选结果内')).toBeInTheDocument()
+    // 正文仍可读（选中没有被搜索清掉）
+    expect(screen.getByRole('heading', { level: 2, name: 'v1.2 改造笔记' })).toBeInTheDocument()
+  })
+
+  it('搜索框 maxlength 与共用上限一致（200）', async () => {
+    const router = makeRouter()
+    await router.isReady()
+    render(NotesView, { global: { plugins: [router] } })
+
+    const input = await screen.findByRole('searchbox', { name: '搜索笔记' })
+    expect(input).toHaveAttribute('maxlength', '200')
+  })
+})

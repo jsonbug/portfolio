@@ -91,7 +91,8 @@ describe('ProjectCard', () => {
       ],
     })
 
-    const repo = screen.getByRole('link', { name: '仓库 · 演示项目（新窗口打开）' })
+    // failed 链接仍可点，但可访问名里补了失败说明（F9 只降级 failed）
+    const repo = screen.getByRole('link', { name: '仓库 · 演示项目（新窗口打开，链接检查失败）' })
     expect(repo).toHaveAttribute('target', '_blank')
     expect(repo).toHaveAttribute('rel', 'noopener noreferrer')
     const card = screen.getByRole('article')

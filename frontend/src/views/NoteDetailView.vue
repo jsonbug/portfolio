@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { getPublicNote, listPublicNotes } from '@/api/notes'
 import { renderMarkdown } from '@/utils/markdown'
 import { formatDate, readingTimeMinutes } from '@/utils/text'
 import type { NoteDetail, NoteSummary } from '@/types'
 
 const props = defineProps<{ slug: string }>()
+const router = useRouter()
 
 const note = ref<NoteDetail | null>(null)
 const loading = ref(true)
@@ -18,9 +20,13 @@ const bodyHtml = computed(() => (note.value ? renderMarkdown(note.value.body_md)
 const readMinutes = computed(() => (note.value ? readingTimeMinutes(note.value.body_md) : 0))
 
 const bodyEl = ref<HTMLElement | null>(null)
+/** 正文标题：切换笔记后把焦点交过来（读屏从这里开始念）。 */
+const titleEl = ref<HTMLElement | null>(null)
 const toc = ref<{ id: string; text: string; level: number }[]>([])
 
 const index = computed(() => siblings.value.findIndex((item) => item.slug === note.value?.slug))
+/** 当前笔记不在「最近 100 篇」里：上下篇无法定位，明说而不是静默不渲染。 */
+const outsideRecent = computed(() => index.value === -1 && siblings.value.length > 0)
 const prev = computed(() => (index.value > 0 ? siblings.value[index.value - 1] : null))
 const next = computed(() =>
   index.value >= 0 && index.value < siblings.value.length - 1 ? siblings.value[index.value + 1] : null,
@@ -38,6 +44,8 @@ async function buildToc(): Promise<void> {
   toc.value = nodes.map((node, i) => {
     const id = node.id || `heading-${i + 1}`
     node.id = id
+    // 锚点跳转后目标可聚焦，键盘用户不会「跳过去但焦点还留在目录里」。
+    node.tabIndex = -1
     return { id, text: node.textContent?.trim() ?? '', level: Number(node.tagName.slice(1)) }
   })
 }
@@ -47,6 +55,12 @@ async function load(slug: string): Promise<void> {
   error.value = ''
   try {
     note.value = await getPublicNote(slug)
+    // 旧 slug 被 301 到规范 slug 后收敛地址栏，别人复制到的是新地址。
+    if (note.value.slug !== slug) {
+      await router.replace({ name: 'note-detail', params: { slug: note.value.slug } })
+    }
+    await nextTick()
+    titleEl.value?.focus()
   } catch (e) {
     note.value = null
     toc.value = []
@@ -92,7 +106,7 @@ watch(
 
     <template v-else-if="note">
       <header class="head">
-        <h1 class="type-h1">{{ note.title }}</h1>
+        <h1 ref="titleEl" class="type-h1" tabindex="-1">{{ note.title }}</h1>
         <p class="meta type-small">
           <RouterLink :to="{ name: 'project-detail', params: { slug: note.project.slug } }" class="project-link">
             {{ note.project.name }}
@@ -112,7 +126,7 @@ watch(
           <div ref="bodyEl" class="markdown" v-html="bodyHtml" />
         </article>
 
-        <aside class="side">
+        <aside class="side" aria-live="polite">
           <section v-if="toc.length" class="card panel" aria-labelledby="toc-title">
             <h2 id="toc-title" class="panel-title type-small">目录</h2>
             <ul class="toc">
@@ -132,6 +146,10 @@ watch(
         </aside>
       </div>
 
+      <p v-if="outsideRecent" class="siblings-hint type-small">
+        这篇笔记较早，未在最近 100 篇内，上下篇不可用。
+        <RouterLink :to="{ name: 'notes' }">回笔记列表</RouterLink>
+      </p>
       <nav v-if="prev || next" class="siblings" aria-label="上下篇">
         <RouterLink v-if="prev" :to="{ name: 'note-detail', params: { slug: prev.slug } }" class="sibling">
           <span class="type-mono sibling-label">← 上一篇</span>
@@ -350,5 +368,12 @@ watch(
   padding-left: var(--space-16);
   border-left: 3px solid var(--c-border);
   color: var(--c-text-secondary);
+}
+.siblings-hint {
+  margin: 0;
+  color: var(--c-text-secondary);
+}
+.siblings-hint a {
+  color: var(--c-primary-strong);
 }
 </style>

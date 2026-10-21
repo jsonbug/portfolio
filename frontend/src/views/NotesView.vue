@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getPublicNote, listPublicNotes } from '@/api/notes'
 import { renderMarkdown } from '@/utils/markdown'
 import { debounce } from '@/utils/timing'
-import { formatDate, readingTimeMinutes } from '@/utils/text'
+import { MAX_SEARCH_LENGTH, clampSearch, formatDate, readingTimeMinutes } from '@/utils/text'
 import type { NoteDetail, NoteSummary } from '@/types'
 
 /** 契约 §3.3：`/notes` 单页上限 100，超出必须明确提示。 */
@@ -23,7 +23,7 @@ const detailLoading = ref(false)
 const detailError = ref('')
 let detailSeq = 0
 
-const searchText = ref(typeof route.query.q === 'string' ? route.query.q : '')
+const searchText = ref(clampSearch(typeof route.query.q === 'string' ? route.query.q : ''))
 const selectedSlug = computed(() => {
   const note = route.query.note
   return typeof note === 'string' && note ? note : (items.value[0]?.slug ?? '')
@@ -42,6 +42,19 @@ const groups = computed(() => {
 
 const truncated = computed(() => total.value > NOTES_PAGE_SIZE)
 
+/** 当前选中的笔记被搜索/分页挡在列表外（正文仍可看，但左栏里找不到它）。 */
+const selectedHidden = computed(
+  () => !!selectedSlug.value && items.value.length > 0 && !items.value.some((n) => n.slug === selectedSlug.value),
+)
+
+/** 正文区：切换笔记后把焦点交给它，键盘用户不用再 Tab 一大圈。 */
+const bodyRef = ref<HTMLElement | null>(null)
+
+/** 语音提示区文案（右栏 aria-live 用，避免整段正文被重读）。 */
+const liveText = computed(() =>
+  detail.value ? `已打开笔记：${detail.value.title}，约 ${readMinutes.value} 分钟` : '',
+)
+
 const bodyHtml = computed(() => (detail.value ? renderMarkdown(detail.value.body_md) : ''))
 const readMinutes = computed(() => (detail.value ? readingTimeMinutes(detail.value.body_md) : 0))
 
@@ -50,7 +63,7 @@ async function loadList(): Promise<void> {
   error.value = ''
   try {
     const res = await listPublicNotes({
-      search: searchText.value.trim() || undefined,
+      search: clampSearch(searchText.value) || undefined,
       page: 1,
       pageSize: NOTES_PAGE_SIZE,
     })
@@ -84,9 +97,10 @@ async function loadDetail(slug: string): Promise<void> {
   }
 }
 
-// 搜索 300ms 防抖后落到 URL，URL 仍是唯一真源。
+// 搜索 300ms 防抖后落到 URL，URL 仍是唯一真源；输入框与 URL 共用 clampSearch 收口。
 const commitSearch = debounce((value: string) => {
-  void router.replace({ query: { ...route.query, q: value.trim() || undefined } })
+  const q = clampSearch(value)
+  void router.replace({ query: { ...route.query, q: q || undefined } })
 }, 300)
 onUnmounted(() => commitSearch.cancel())
 
@@ -97,6 +111,19 @@ watch(() => route.query.q, (value) => {
 })
 watch(() => route.query.q, () => void loadList(), { immediate: true })
 watch(selectedSlug, (slug) => void loadDetail(slug), { immediate: true })
+// 首次进入（URL 里没有 ?note=）时把默认选中的第一篇写回地址栏：URL 是唯一真源，不能漏格。
+watch(
+  items,
+  (list) => {
+    if (route.query.note || !list.length) return
+    void router.replace({ query: { ...route.query, note: list[0].slug } })
+  },
+  { immediate: true },
+)
+watch(selectedSlug, async () => {
+  await nextTick()
+  bodyRef.value?.focus()
+})
 </script>
 
 <template>
@@ -108,7 +135,13 @@ watch(selectedSlug, (slug) => void loadDetail(slug), { immediate: true })
 
     <label class="search field">
       <span class="field-label">搜索笔记</span>
-      <input v-model="searchText" class="input" type="search" placeholder="标题或正文" />
+      <input
+        v-model="searchText"
+        class="input"
+        type="search"
+        placeholder="标题或正文"
+        :maxlength="MAX_SEARCH_LENGTH"
+      />
     </label>
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -117,6 +150,7 @@ watch(selectedSlug, (slug) => void loadDetail(slug), { immediate: true })
     <div v-else class="notes-grid">
       <nav class="notes-list" aria-label="笔记列表">
         <p v-if="truncated" class="truncated">仅显示最近 {{ NOTES_PAGE_SIZE }} 篇</p>
+        <p v-if="selectedHidden" class="hidden-note type-small">当前笔记不在筛选结果内</p>
         <p v-if="!groups.length" class="hint empty">
           {{ searchText ? '没有匹配的笔记' : '还没有笔记' }}
         </p>
@@ -139,12 +173,13 @@ watch(selectedSlug, (slug) => void loadDetail(slug), { immediate: true })
         </section>
       </nav>
 
-      <article class="note-body card">
+      <article ref="bodyRef" class="note-body card" tabindex="-1" aria-labelledby="note-body-title">
+        <p class="sr-only" aria-live="polite">{{ liveText }}</p>
         <p v-if="detailError" class="error" role="alert">{{ detailError }}</p>
         <p v-else-if="detailLoading && !detail" class="hint">加载中…</p>
         <template v-else-if="detail">
           <header class="note-head">
-            <h2 class="type-h2">{{ detail.title }}</h2>
+            <h2 id="note-body-title" class="type-h2">{{ detail.title }}</h2>
             <p class="note-meta type-small">
               <span>{{ detail.project.name }}</span>
               <span aria-hidden="true">·</span>
@@ -333,5 +368,12 @@ watch(selectedSlug, (slug) => void loadDetail(slug), { immediate: true })
 }
 .markdown :deep(a) {
   color: var(--c-primary);
+}
+.hidden-note {
+  margin: 0 var(--space-8) var(--space-8);
+  padding: var(--space-4) var(--space-8);
+  color: var(--c-warning);
+  background: var(--c-fill);
+  border-radius: var(--r-tag);
 }
 </style>

@@ -35,7 +35,9 @@ const fallbackStyle = computed(() => ({
   background: `linear-gradient(135deg, ${gradient.value.from}, ${gradient.value.to})`,
 }))
 const filterStyle = computed(() => luminanceFilter(tier.value))
-const showImage = computed(() => props.coverImage != null && !failed.value)
+const safeCover = computed(() => safeHttpUrl(props.coverImage))
+// 只有白名单内的地址才渲染 <img>：非法地址（javascript: 等）直接走渐变兜底
+const showImage = computed(() => safeCover.value != null && !failed.value)
 
 function sampleLuminance(img: HTMLImageElement): LuminanceTier {
   try {
@@ -80,7 +82,7 @@ watch(
     <img
       v-if="showImage"
       class="cover-img"
-      :src="safeHttpUrl(coverImage) ?? undefined"
+      :src="safeCover ?? undefined"
       :style="{ filter: filterStyle }"
       alt=""
       loading="lazy"

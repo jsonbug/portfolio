@@ -103,3 +103,59 @@ describe('NoteDetailView', () => {
     }
   })
 })
+
+describe('NoteDetailView · 门槛与 a11y', () => {
+  beforeEach(() => resetMockDb())
+
+  it('上下篇定位失败时给出说明与回列表入口，而不是静默不渲染', async () => {
+    // 造 100 篇更晚的笔记，把种子笔记挤出「最近 100 篇」
+    for (let i = 0; i < 100; i += 1) {
+      const created = admin('POST', '/admin/notes', {
+        project_id: 'proj_chart',
+        slug: `bulk-${i}`,
+        title: `批量笔记 ${i}`,
+        body_md: '批量正文',
+        publish_status: 'published',
+      })
+      expect(created.status).toBe(201)
+    }
+
+    await renderNote('chart-kit-0-9')
+    await screen.findByRole('heading', { level: 1, name: 'Chart Kit 0.9 发布说明' })
+
+    const hint = await screen.findByText(/这篇笔记较早，未在最近 100 篇内/)
+    expect(hint).toBeInTheDocument()
+    expect(within(hint).getByRole('link', { name: '回笔记列表' })).toHaveAttribute('href', '/notes')
+  })
+
+  it('正文标题可聚焦、目录锚点目标带 tabindex，切换后有 aria-live 播报区', async () => {
+    const created = admin('POST', '/admin/notes', {
+      project_id: 'proj_portfolio',
+      slug: 'toc-note',
+      title: '带目录的笔记',
+      body_md: '## 第一节\n\n正文一。\n\n### 小节\n\n正文二。\n\n## 第二节\n\n正文三。',
+      publish_status: 'published',
+    })
+    expect(created.status).toBe(201)
+
+    await renderNote('toc-note')
+    const title = await screen.findByRole('heading', { level: 1, name: '带目录的笔记' })
+    expect(title).toHaveAttribute('tabindex', '-1')
+
+    await waitFor(() =>
+      expect(screen.getAllByRole('link').filter((a) => a.getAttribute('href')?.startsWith('#')).length).toBeGreaterThan(0),
+    )
+    const tocLinks = screen.getAllByRole('link').filter((a) => a.getAttribute('href')?.startsWith('#'))
+    for (const link of tocLinks) {
+      const id = link.getAttribute('href')!.slice(1)
+      expect(document.getElementById(id)).toHaveAttribute('tabindex', '-1')
+    }
+    expect(document.querySelector('aside[aria-live="polite"]')).not.toBeNull()
+  })
+
+  it('旧 slug 301 后把地址栏收敛到规范 slug', async () => {
+    const router = await renderNote('v1-2-notes-old')
+    await screen.findByRole('heading', { level: 1, name: 'v1.2 改造笔记' })
+    await waitFor(() => expect(router.currentRoute.value.params.slug).toBe('v1-2-notes'))
+  })
+})

@@ -25,6 +25,11 @@ const siteLink = computed(() => {
 })
 /** 卡片标题的 id 供卡片链接用 aria-labelledby 指过来（摘要仍留在可访问名里）。 */
 const titleId = computed(() => `project-card-title-${props.item.id}`)
+/** F9：只有 failed 才降级展示（低对比 + 失效图标 + 说明），ok / unknown / null 一律同款。 */
+function isFailed(link: { last_status: string } | null): boolean {
+  return link?.last_status === 'failed'
+}
+
 /** 手填的 last_updated_at 优先，没有则退回记录更新时间。 */
 const updatedAt = computed(() => props.item.last_updated_at ?? props.item.updated_at)
 const updatedText = computed(() => formatDate(updatedAt.value))
@@ -58,20 +63,36 @@ const updatedText = computed(() => formatDate(updatedAt.value))
       <a
         v-if="repoLink"
         class="card-link"
+        :class="{ 'card-link--failed': isFailed(repoLink) }"
         :href="repoLink.url"
         target="_blank"
         rel="noopener noreferrer"
-        :aria-label="`仓库 · ${item.name}（新窗口打开）`"
-        >仓库<span class="card-link-mark" aria-hidden="true">↗</span></a
+        :title="isFailed(repoLink) ? '链接检查失败，仍可尝试打开' : undefined"
+        :aria-label="
+          isFailed(repoLink) ? `仓库 · ${item.name}（新窗口打开，链接检查失败）` : `仓库 · ${item.name}（新窗口打开）`
+        "
+        ><span v-if="isFailed(repoLink)" class="card-link-mark" aria-hidden="true">⚠</span>仓库<span
+          class="card-link-mark"
+          aria-hidden="true"
+          >↗</span
+        ></a
       >
       <a
         v-if="siteLink"
         class="card-link"
+        :class="{ 'card-link--failed': isFailed(siteLink) }"
         :href="siteLink.url"
         target="_blank"
         rel="noopener noreferrer"
-        :aria-label="`官网 · ${item.name}（新窗口打开）`"
-        >官网<span class="card-link-mark" aria-hidden="true">↗</span></a
+        :title="isFailed(siteLink) ? '链接检查失败，仍可尝试打开' : undefined"
+        :aria-label="
+          isFailed(siteLink) ? `官网 · ${item.name}（新窗口打开，链接检查失败）` : `官网 · ${item.name}（新窗口打开）`
+        "
+        ><span v-if="isFailed(siteLink)" class="card-link-mark" aria-hidden="true">⚠</span>官网<span
+          class="card-link-mark"
+          aria-hidden="true"
+          >↗</span
+        ></a
       >
     </div>
   </article>
@@ -182,5 +203,12 @@ const updatedText = computed(() => formatDate(updatedAt.value))
 }
 .card-link-mark {
   color: var(--c-text-secondary);
+}
+/* F9：failed 才降级（低对比），仍可点 */
+.card-link--failed {
+  color: var(--c-text-secondary);
+}
+.card-link--failed:hover {
+  color: var(--c-text);
 }
 </style>
