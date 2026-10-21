@@ -20,3 +20,16 @@ export function formatDate(iso: string): string {
   if (Number.isNaN(date.getTime())) return ''
   return date.toISOString().slice(0, 10)
 }
+
+/**
+ * 距今天数（整数，向下取整，未来时间夹到 0）。
+ *
+ * @param iso ISO 日期字符串，null / 非法值返回 null
+ * @param now 当前时间戳（毫秒），便于测试注入
+ */
+export function daysAgo(iso: string | null, now: number = Date.now()): number | null {
+  if (!iso) return null
+  const time = new Date(iso).getTime()
+  if (Number.isNaN(time)) return null
+  return Math.max(0, Math.floor((now - time) / 86_400_000))
+}

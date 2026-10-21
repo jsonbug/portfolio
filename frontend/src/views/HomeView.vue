@@ -1,152 +1,190 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { listPublicProjects } from '@/api/projects'
-import ProjectCover from '@/components/ProjectCover.vue'
-import type { ProjectListItem } from '@/types'
-import { formatDate } from '@/utils/text'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { listTechnologies } from '@/api/technologies'
+import ProjectCard from '@/components/ProjectCard.vue'
+import ProjectCardSkeleton from '@/components/ProjectCardSkeleton.vue'
+import ProjectEmptyState from '@/components/ProjectEmptyState.vue'
+import ProjectFilterBar from '@/components/ProjectFilterBar.vue'
+import { LIST_PAGE_SIZE, useProjectList } from '@/composables/useProjectList'
+import {
+  DEFAULT_FILTERS,
+  isDefaultFilters,
+  parseFilters,
+  toQuery,
+  type ProjectListFilters,
+} from '@/composables/useProjectListFilters'
+import { daysAgo } from '@/utils/text'
 
-const items = ref<ProjectListItem[]>([])
-const loading = ref(true)
-const error = ref('')
+/**
+ * 前台项目列表。
+ *
+ * 数据流：URL query 是筛选条件的唯一真源 → `filters`(computed) → useProjectList 拉取。
+ * 任何交互都只改 URL（router.replace），因此刷新、分享、前进后退都自然一致。
+ */
+const route = useRoute()
+const router = useRouter()
 
-async function load() {
-  loading.value = true
-  error.value = ''
+const filters = computed(() => parseFilters(route.query))
+const { items, counts, total, loading, error, reload } = useProjectList(filters)
+
+const technologies = ref<string[]>([])
+
+onMounted(async () => {
   try {
-    const res = await listPublicProjects({ page: 1, pageSize: 100 })
-    items.value = res.items
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载失败'
-  } finally {
-    loading.value = false
+    technologies.value = (await listTechnologies()).items
+  } catch {
+    // 技术栈选项拿不到不影响列表主体，只是少一个筛选维度。
+    technologies.value = []
   }
+})
+
+const filtered = computed(() => !isDefaultFilters(filters.value))
+
+/** 页头汇总里的「最近更新」：取当前结果集里最新的一次更新。 */
+const recentText = computed(() => {
+  const stamps = items.value
+    .map((item) => item.last_updated_at ?? item.updated_at)
+    .filter((iso): iso is string => Boolean(iso))
+    .map((iso) => new Date(iso).getTime())
+    .filter((time) => !Number.isNaN(time))
+  if (!stamps.length) return ''
+  return recentPhrase(daysAgo(new Date(Math.max(...stamps)).toISOString()))
+})
+
+/** 页头文案：0 天说「今天更新」，否则「最近更新 N 天前」。 */
+function recentPhrase(days: number | null): string {
+  if (days === null) return ''
+  return days <= 0 ? '今天更新' : `最近更新 ${days} 天前`
 }
 
-onMounted(() => void load())
+const showSkeleton = computed(() => loading.value && items.value.length === 0)
+/** 一次只取 50 条：结果更多时明确提示，不静默截断。 */
+const truncated = computed(() => total.value > LIST_PAGE_SIZE)
+const showEmpty = computed(() => !loading.value && !error.value && items.value.length === 0)
+/** 供读屏播报结果数量变化（视觉上无对应元素）。 */
+const resultAnnouncement = computed(() =>
+  loading.value ? '正在加载项目' : `共 ${items.value.length} 个结果`,
+)
+
+function apply(patch: Partial<ProjectListFilters>): void {
+  const next: ProjectListFilters = { ...filters.value, ...patch }
+  const current = JSON.stringify(toQuery(filters.value))
+  const target = JSON.stringify(toQuery(next))
+  if (current === target) return
+  void router.replace({ query: toQuery(next) })
+}
+
+function clearFilters(): void {
+  apply({ ...DEFAULT_FILTERS })
+}
 </script>
 
 <template>
-  <main class="page home">
+  <main class="home">
     <header class="home-header">
-      <h1>项目展示平台</h1>
-      <p class="subtitle">我做过的项目，附笔记与元数据。</p>
+      <h1 class="type-display">项目</h1>
+      <p v-if="!showSkeleton && counts.all > 0" class="home-summary">
+        <span class="tabular-nums">{{ counts.all }} 个项目</span>
+        <span v-if="recentText" aria-hidden="true"> · </span>
+        <span v-if="recentText">最近更新 {{ recentText }}</span>
+      </p>
     </header>
 
-    <p v-if="error" class="error" role="alert">{{ error }}</p>
-    <p v-if="loading" class="hint">加载中…</p>
-    <p v-else-if="!items.length" class="hint">暂无已发布项目。</p>
+    <ProjectFilterBar
+      :filters="filters"
+      :counts="counts"
+      :technologies="technologies"
+      @update="apply"
+      @search="(q) => apply({ q })"
+    />
 
-    <ul v-else class="grid">
-      <li v-for="item in items" :key="item.id">
-        <RouterLink class="card project-card" :to="{ name: 'project-detail', params: { slug: item.slug } }">
-          <ProjectCover :name="item.name" :cover-image="item.cover_image_url" variant="card" />
-          <div class="card-body">
-            <h2 class="project-name">{{ item.name }}</h2>
-            <p v-if="item.summary" class="project-tagline">{{ item.summary }}</p>
-            <div class="project-meta">
-              <span v-if="item.tech_stack.length" class="tags">
-                <span v-for="tech in item.tech_stack" :key="tech" class="tag">{{ tech }}</span>
-              </span>
-              <span class="meta">
-                <span v-if="item.stars != null">★ {{ item.stars }}</span>
-                <span>{{ formatDate(item.last_updated_at ?? item.updated_at) }}</span>
-              </span>
-            </div>
-          </div>
-        </RouterLink>
-      </li>
-    </ul>
+    <p class="sr-only" aria-live="polite">{{ resultAnnouncement }}</p>
+
+    <p v-if="error" class="error" role="alert">
+      {{ error }}
+      <button type="button" class="btn btn-sm" @click="reload">重试</button>
+    </p>
+
+    <ProjectCardSkeleton v-if="showSkeleton" />
+
+    <ProjectEmptyState v-else-if="showEmpty" :filtered="filtered" @clear="clearFilters" />
+
+    <template v-else>
+      <ul class="grid" :aria-busy="loading">
+        <li v-for="item in items" :key="item.id">
+          <ProjectCard :item="item" />
+        </li>
+      </ul>
+      <p v-if="truncated" class="truncated">
+        仅显示前 {{ LIST_PAGE_SIZE }} 个，请用搜索/筛选缩小范围
+      </p>
+    </template>
   </main>
 </template>
 
 <style scoped>
-.home {
-  max-width: 72rem;
-}
 .home-header {
-  margin-bottom: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin-bottom: var(--space-24);
 }
 .home-header h1 {
   margin: 0;
-  font-size: 28px;
   color: var(--c-ink);
 }
-.subtitle {
-  margin: var(--sp-1) 0 0;
-  font-size: 13px;
+.home-summary {
+  margin: 0;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
   color: var(--c-text-secondary);
 }
 .error {
-  margin: 0;
-  padding: 8px 12px;
-  color: var(--c-danger);
-  background: var(--c-fill);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  margin: 0 0 var(--space-24);
+  padding: var(--space-12) var(--space-16);
   border-radius: var(--r-control);
+  background: var(--c-fill);
+  color: var(--c-danger);
+  font-size: var(--fs-small);
 }
-.hint {
-  margin: 0;
+.truncated {
+  margin: var(--space-16) 0 0;
+  font-size: var(--fs-small);
+  line-height: var(--lh-small);
   color: var(--c-text-secondary);
+  text-align: center;
 }
 .grid {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: var(--sp-3);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--card-gap);
 }
-.project-card {
-  display: block;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
   overflow: hidden;
-  text-decoration: none;
-  color: inherit;
-  transition: box-shadow 0.15s;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
-.project-card:hover {
-  text-decoration: none;
-  box-shadow: 0 4px 16px rgba(20, 17, 13, 0.08);
+@media (min-width: 768px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
-.card-body {
-  padding: var(--sp-2);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-}
-.project-name {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--c-ink);
-}
-.project-tagline {
-  margin: 0;
-  font-size: 13px;
-  color: var(--c-text-secondary);
-}
-.project-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-2);
-  flex-wrap: wrap;
-}
-.tags {
-  display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.tag {
-  padding: 1px 8px;
-  font-size: 12px;
-  color: var(--c-primary-strong);
-  background: var(--c-primary-soft);
-  border-radius: var(--r-tag);
-}
-.meta {
-  display: inline-flex;
-  gap: var(--sp-2);
-  font-size: 12px;
-  color: var(--c-text-secondary);
-  font-variant-numeric: tabular-nums;
+@media (min-width: 1280px) {
+  .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 </style>
