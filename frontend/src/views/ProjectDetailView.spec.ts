@@ -68,13 +68,15 @@ describe('ProjectDetailView', () => {
   it('相关链接：类型文案 + 裸域名 + 新窗口 rel', async () => {
     renderDetail('portfolio-platform')
 
-    const link = await screen.findByRole('link', { name: /GitHub/ })
+    const link = await screen.findByRole('link', { name: '仓库 · 项目展示平台（新窗口打开）' })
     expect(link).toHaveAttribute('href', 'https://github.com/jsonbug/portfolio')
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
     expect(link).toHaveTextContent('github.com')
     // 仓库 / 官网两类都在
-    expect(screen.getByRole('link', { name: /官网/ })).toHaveTextContent('portfolio.example.com')
+    expect(screen.getByRole('link', { name: '官网 · 项目展示平台（新窗口打开）' })).toHaveTextContent(
+      'portfolio.example.com',
+    )
   })
 
   it('渲染 Markdown 介绍与相关笔记（草稿笔记不出现）', async () => {

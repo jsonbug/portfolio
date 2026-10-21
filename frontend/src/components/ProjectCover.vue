@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { safeHttpUrl } from '@/utils/link'
 import { computed, ref, watch } from 'vue'
 import {
   averageLuminance,
@@ -79,7 +80,7 @@ watch(
     <img
       v-if="showImage"
       class="cover-img"
-      :src="coverImage ?? undefined"
+      :src="safeHttpUrl(coverImage) ?? undefined"
       :style="{ filter: filterStyle }"
       alt=""
       loading="lazy"

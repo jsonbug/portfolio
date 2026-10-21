@@ -2,8 +2,7 @@ import { request } from './client'
 import { buildQueryString } from './query'
 import type {
   AdminProjectDetail,
-  AdminProjectListItem,
-  ListEnvelope,
+  AdminProjectListEnvelope,
   MetadataItemInput,
   Progress,
   ProjectCreate,
@@ -50,8 +49,8 @@ export function getPublicProject(slug: string): Promise<ProjectDetail> {
 
 // ---------- 后台（Bearer） ----------
 
-export function listAdminProjects(query: AdminProjectQuery = {}): Promise<ListEnvelope<AdminProjectListItem>> {
-  return request<ListEnvelope<AdminProjectListItem>>(`/admin/projects${buildQueryString({ ...query })}`)
+export function listAdminProjects(query: AdminProjectQuery = {}): Promise<AdminProjectListEnvelope> {
+  return request<AdminProjectListEnvelope>(`/admin/projects${buildQueryString({ ...query })}`)
 }
 
 export function getAdminProject(id: string): Promise<AdminProjectDetail> {

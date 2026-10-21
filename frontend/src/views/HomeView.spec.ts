@@ -68,22 +68,37 @@ describe('HomeView 列表', () => {
   it('卡片包含 star、更新时间、进展徽标与仓库/官网双入口', async () => {
     await renderHome()
     await waitForList()
-    const card = screen.getByRole('link', { name: '查看项目：项目展示平台' }).closest('article')
+    // 卡片链接用 aria-labelledby 指向卡片标题，可访问名就是项目名
+    const card = screen.getByRole('link', { name: '项目展示平台' }).closest('article')
     expect(card).not.toBeNull()
     const scope = within(card as HTMLElement)
     expect(scope.getByText('★ 128')).toBeInTheDocument()
     expect(scope.getByText(/更新$/)).toBeInTheDocument()
     expect(scope.getByText('进行中')).toBeInTheDocument()
     expect(scope.getByText('把散落在收藏夹里的项目收进一个可检索、可记笔记的展示站。')).toBeInTheDocument()
-    expect(scope.getByRole('link', { name: /仓库/ })).toHaveAttribute(
+    // 外部入口可访问名带项目名 + 新窗口提示
+    expect(scope.getByRole('link', { name: '仓库 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
       'href',
       'https://github.com/jsonbug/portfolio',
     )
-    expect(scope.getByRole('link', { name: /官网/ })).toHaveAttribute(
+    expect(scope.getByRole('link', { name: '官网 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
       'href',
       'https://portfolio.example.com',
     )
     expect(scope.getByRole('link', { name: /仓库/ })).toHaveAttribute('rel', 'noopener noreferrer')
+  })
+})
+
+describe('HomeView 页头与截断', () => {
+  beforeEach(() => resetMockDb())
+
+  it('页头用 total 而不是 counts.all：搜索后只剩 1 个项目', async () => {
+    await renderHome('/?q=抓取')
+    await waitForList('抓取工具箱')
+    expect(screen.getByText('1 个项目')).toBeInTheDocument()
+    // 分段计数仍来自 counts（搜索后重算，progress 过滤前）
+    const segments = screen.getByRole('navigation', { name: '项目分段' })
+    expect(within(segments).getByRole('button', { name: '全部 1' })).toBeInTheDocument()
   })
 })
 

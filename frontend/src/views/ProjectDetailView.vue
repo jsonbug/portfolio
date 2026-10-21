@@ -4,7 +4,7 @@ import { getPublicProject } from '@/api/projects'
 import ProjectCover from '@/components/ProjectCover.vue'
 import ProgressBadge from '@/components/ProgressBadge.vue'
 import { LINK_TYPE_LABELS, type ProjectDetail } from '@/types'
-import { bareDomain } from '@/utils/link'
+import { bareDomain, safeHttpUrl } from '@/utils/link'
 import { renderMarkdown } from '@/utils/markdown'
 import { formatDate } from '@/utils/text'
 
@@ -130,10 +130,27 @@ onMounted(() => void load())
             <h2 id="links-title">相关链接</h2>
             <ul class="links">
               <li v-for="link in detail.links" :key="link.id" class="link">
-                <a :href="link.url" target="_blank" rel="noopener noreferrer" class="link-anchor">
+                <span v-if="!safeHttpUrl(link.url)" class="link-anchor link-anchor--plain">
+                  <span class="link-type">{{ LINK_TYPE_LABELS[link.type] }}</span>
+                  <span class="link-label">{{ link.label || link.url }}</span>
+                  <span class="link-host type-small">链接地址不合法，已停用</span>
+                </span>
+                <a
+                  v-else
+                  :href="safeHttpUrl(link.url) ?? undefined"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="link-anchor"
+                  :aria-label="`${LINK_TYPE_LABELS[link.type]} · ${detail.name}（新窗口打开）`"
+                >
                   <span class="link-type">{{ LINK_TYPE_LABELS[link.type] }}</span>
                   <span class="link-label">{{ link.label || bareDomain(link.url) }}</span>
-                  <span class="link-host type-small">{{ bareDomain(link.url) }}</span>
+                  <span class="link-host type-small">
+                    {{ bareDomain(link.url) }}
+                    <span v-if="link.last_status === 'failed'" class="link-failed">
+                      检查失败{{ link.last_http_status ? ` ${link.last_http_status}` : '' }}
+                    </span>
+                  </span>
                 </a>
               </li>
             </ul>
@@ -275,6 +292,9 @@ onMounted(() => void load())
 .link-host {
   grid-column: 2;
   color: var(--c-text-secondary);
+}
+.link-failed {
+  color: var(--c-danger);
 }
 .kv {
   margin: 0;
