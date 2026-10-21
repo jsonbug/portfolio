@@ -119,22 +119,39 @@ export async function runPlan(opts) {
   section('环境自证 / 库身份')
   console.log(`  目标 BASE：${CONFIG.base}`)
   console.log(`  本次 RUN 前缀：${RUN}`)
+  /**
+   * 身份自证阶段的每一步都要「当场停」：下一步的哨兵写入、软删，以及之后的 resetProjects()
+   * 都会对目标库发写操作。撞上别人的库时，多跑一步就是多碰一次别人的数据。
+   * 退出码 3 与「断言失败(1)」「mock 取数失败(2)」区分开，流水线一眼能定位。
+   */
+  const bailIfFailed = (ok, step) => {
+    if (ok) return
+    console.error(`  ✗ 库身份自证失败（${step}）：立即中止，未发出任何清场请求`)
+    process.exit(3)
+  }
   const health = await api('GET', '/health')
-  check('GET /health 返回 ok', health.status === 200 && health.json?.status === 'ok', {
-    status: health.status,
-    body: health.json,
-  })
+  const healthOk = health.status === 200 && health.json?.status === 'ok'
+  check('GET /health 返回 ok', healthOk, { status: health.status, body: health.json })
+  bailIfFailed(healthOk, 'health')
   const sentinelSlug = slugOf('sentinel')
   const sentinel = await api('POST', '/admin/projects', { slug: sentinelSlug, name: `哨兵 ${RUN}` })
-  check('哨兵项目写入成功（201）', sentinel.status === 201, sentinel.status)
+  const wrote = sentinel.status === 201
+  check('哨兵项目写入成功（201）', wrote, sentinel.status)
+  bailIfFailed(wrote, '哨兵写入')
+
   const sentinelBack = await api('GET', `/admin/projects/${sentinel.json?.id}`)
-  check(
-    '哨兵读回一致（同一套库，不是别人的端口）',
-    sentinelBack.status === 200 && sentinelBack.json?.slug === sentinelSlug,
-    { status: sentinelBack.status, slug: sentinelBack.json?.slug },
-  )
+  const sameDb = sentinelBack.status === 200 && sentinelBack.json?.slug === sentinelSlug
+  check('哨兵读回一致（同一套库，不是别人的端口）', sameDb, {
+    status: sentinelBack.status,
+    slug: sentinelBack.json?.slug,
+  })
+  // 读回不一致 = 打到了别人的库：此时连哨兵的软删都不发，直接退出（DELETE 计数必须为 0）
+  bailIfFailed(sameDb, '哨兵读回')
+
   const sentinelGone = await api('DELETE', `/admin/projects/${sentinel.json?.id}`)
-  check('哨兵软删成功', sentinelGone.status === 200 && sentinelGone.json?.deleted_at != null, sentinelGone.json?.deleted_at)
+  const cleaned = sentinelGone.status === 200 && sentinelGone.json?.deleted_at != null
+  check('哨兵软删成功', cleaned, sentinelGone.json?.deleted_at)
+  bailIfFailed(cleaned, '哨兵软删')
 
 
 /** 清场：软删所有既有项目（公开面归零，计数才能断言）。 */
@@ -549,6 +566,15 @@ const sourceEq = argv.find((arg) => arg.startsWith('--source='))
 const sourceIdx = argv.indexOf('--source')
 const SOURCE = sourceEq ? sourceEq.split('=')[1] : sourceIdx >= 0 ? (argv[sourceIdx + 1] ?? 'real') : 'real'
 
+/**
+ * 「已知分叉」的硬上限（写死，不留成可配置变量）。
+ *
+ * 机制有被滥用的风险：把真不一致标成 TODO 就能绕过门禁。所以 ① 每行 TODO 必须写可 git 校验的分支名
+ *（校验命令见 README，不进脚本——无网/无 git 的环境不该被卡死）；② 分叉行数不得超这个上限。
+ * 后端每修完一组就把数字往下调，最终归零；当前为 0（v1.2.3 两项已合）。
+ */
+const MAX_KNOWN_DIVERGENCES = 0
+
 function summarize(planRows) {
   const failures = planRows.filter((row) => row.kind === 'must' && !row.satisfied)
   const pending = planRows.filter((row) => row.kind === 'todo' && !row.satisfied)
@@ -603,6 +629,12 @@ function diffRows(realRows, mockRows) {
   }
   const same = realRows.length - diverged.length - known.length
   console.log(`  一致 ${same} 行 / 已知分叉 ${known.length} 行 / 真不一致 ${diverged.length} 行`)
+  if (known.length > MAX_KNOWN_DIVERGENCES) {
+    console.log(
+      `  ✗ 已知分叉 ${known.length} 行超出硬上限 ${MAX_KNOWN_DIVERGENCES}：要么修，要么把上限单独立案往下调，不能就地放过`,
+    )
+    diverged.push(`已知分叉超上限（${known.length} > ${MAX_KNOWN_DIVERGENCES}）`)
+  }
   return diverged
 }
 
