@@ -5,6 +5,7 @@ import { getPublicProject } from '@/api/projects'
 import AppBadge from '@/components/AppBadge.vue'
 import LinkTypeIcon from '@/components/LinkTypeIcon.vue'
 import ProgressBadge from '@/components/ProgressBadge.vue'
+import { METRIC_MAX } from '@/constants/limits'
 import {
   LINK_TYPE_LABELS,
   PROGRESS_LABELS,
@@ -82,6 +83,9 @@ const heroActions = computed(() => {
  * 公开 payload 里只有 `progress`：能出现在这里的项目一律已发布，
  * 故发布状态固定为「已发布」（见交付评论里的假设记录）。
  */
+/** 有笔记入口时主按钮给「查看笔记」（02 稿：三入口里只有它是主色），否则第一个外部入口当主按钮。 */
+const hasNotesAction = computed(() => heroActions.value.some((action) => action.key === 'notes'))
+
 const fixedMeta = computed(() => {
   const item = detail.value
   if (!item) return []
@@ -110,7 +114,7 @@ const progressShape = computed(() => (detail.value?.progress === 'launched' ? 'c
 
 /** 指标统计格：最多 4 格，0 条时整块不渲染（稿上 4 格是上限，不是要求凑满）。 */
 const metricCells = computed(() =>
-  (detail.value?.metadata ?? []).filter((row) => row.kind === 'metric').slice(0, 4),
+  (detail.value?.metadata ?? []).filter((row) => row.kind === 'metric').slice(0, METRIC_MAX),
 )
 
 /**
@@ -202,14 +206,15 @@ onMounted(() => void load())
                 target="_blank"
                 rel="noopener noreferrer"
                 class="btn"
-                :class="index === 0 ? 'btn-primary' : 'btn-ghost'"
+                :class="index === 0 && !hasNotesAction ? 'btn-primary' : 'btn-ghost'"
                 :aria-label="`${action.label} · ${detail.name}（新窗口打开）`"
                 >{{ action.label }}</a
               >
               <a
                 v-else
                 :href="action.href"
-                class="btn btn-ghost"
+                class="btn"
+                :class="index === heroActions.length - 1 ? 'btn-primary' : 'btn-ghost'"
                 :aria-label="`${action.label} · ${detail.name}（跳到本页笔记区）`"
                 >{{ action.label }}</a
               >
@@ -221,7 +226,7 @@ onMounted(() => void load())
       <div class="body-grid">
         <div class="column-main">
           <section
-            v-if="descriptionHtml || currentShot || metricCells.length"
+            v-if="descriptionHtml || currentShot"
             class="card section"
             aria-labelledby="desc-title"
           >
@@ -270,13 +275,15 @@ onMounted(() => void load())
               </figcaption>
             </figure>
 
-            <ul v-if="metricCells.length" class="metric-grid">
-              <li v-for="cell in metricCells" :key="cell.key_label" class="metric-cell">
-                <strong class="metric-value tabular-nums">{{ cell.value }}</strong>
-                <span class="metric-label type-small">{{ cell.key_label }}</span>
-              </li>
-            </ul>
           </section>
+
+          <!-- 02 稿：指标条是「项目简介」卡下面独立的一条，只吃 kind === 'metric' -->
+          <ul v-if="metricCells.length" class="card metric-bar" aria-label="关键指标">
+            <li v-for="cell in metricCells" :key="cell.key_label" class="metric-cell">
+              <strong class="metric-value tabular-nums">{{ cell.value }}</strong>
+              <span class="metric-label type-small">{{ cell.key_label }}</span>
+            </li>
+          </ul>
 
           <section v-if="detail.notes.length" id="related-notes" class="card section" aria-labelledby="notes-title">
             <div class="section-head">
@@ -616,15 +623,14 @@ onMounted(() => void load())
 }
 
 /* 4 格指标：稿上是等分格 + 左侧发丝线，窄屏折成 2 列 */
-.metric-grid {
+.metric-bar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* 2 条就均分两格、4 条就四格：不为了「凑四格」往里塞 stars/version（口径差异 #5） */
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   gap: 0;
-  margin: var(--space-24) 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-card);
   overflow: hidden;
 }
 
@@ -652,7 +658,7 @@ onMounted(() => void load())
 }
 
 @media (max-width: 767px) {
-  .metric-grid {
+  .metric-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

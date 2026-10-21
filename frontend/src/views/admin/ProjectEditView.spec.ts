@@ -137,6 +137,15 @@ describe('ProjectEditView · 截图与元数据 kind（契约 4.1.1）', () => {
     expect(rows.find((m) => m.key_label === '代码行数')?.kind).toBe('metric')
   })
 
+  it('笔记列表每行都有「编辑」入口（03 稿标题区的编辑入口）', async () => {
+    await renderEditor('proj_portfolio')
+
+    const section = within(await screen.findByRole('region', { name: '笔记' }))
+    const links = await section.findAllByRole('link', { name: /^编辑笔记：/ })
+    expect(links.length).toBeGreaterThan(0)
+    expect(links[0]).toHaveAttribute('href', expect.stringContaining('/admin/notes/'))
+  })
+
   it('两个大分区默认折叠，简介带建议文案与实时字数', async () => {
     await renderEditor('proj_portfolio')
 

@@ -180,6 +180,14 @@ describe('HomeView 搜索', () => {
   })
 })
 
+/** 批乙起技术栈收进下拉：先展开面板再点选项。 */
+async function openTechPanel(): Promise<void> {
+  if (screen.queryByRole('group', { name: '技术栈筛选' }) === null) {
+    await fireEvent.click(screen.getByTestId('tech-trigger'))
+  }
+  await screen.findByRole('group', { name: '技术栈筛选' })
+}
+
 describe('HomeView 技术栈与排序', () => {
   beforeEach(() => resetMockDb())
 
@@ -187,6 +195,7 @@ describe('HomeView 技术栈与排序', () => {
     const { router } = await renderHome()
     await waitForList()
 
+    await openTechPanel()
     await fireEvent.click(screen.getByRole('button', { name: 'Python' }))
     await waitFor(() => expect(cardNames()).toEqual(['抓取工具箱']))
     expect(router.currentRoute.value.query.tech).toEqual(['Python'])
@@ -200,6 +209,7 @@ describe('HomeView 技术栈与排序', () => {
     const { router } = await renderHome()
     await waitForList()
 
+    await openTechPanel()
     const chip = screen.getByRole('button', { name: 'Python' })
     // 不 await：模拟极快的连点（路由还没落定）
     await fireEvent.click(chip)
@@ -207,6 +217,34 @@ describe('HomeView 技术栈与排序', () => {
 
     await waitFor(() => expect(cardNames().sort()).toEqual([...CARD_NAMES].sort()))
     expect(router.currentRoute.value.query.tech).toBeUndefined()
+  })
+
+  it('技术栈下拉有显式选中态：触发按钮带数量、面板里列出已选', async () => {
+    await renderHome()
+    await waitForList()
+
+    const trigger = screen.getByTestId('tech-trigger')
+    expect(trigger).toHaveTextContent('技术栈')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+    await fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    const panel = await screen.findByRole('group', { name: '技术栈筛选' })
+    expect(within(panel).getByText('已选 0 个')).toBeInTheDocument()
+
+    await fireEvent.click(within(panel).getByRole('button', { name: 'Python' }))
+    await waitFor(() => expect(cardNames()).toEqual(['抓取工具箱']))
+
+    // 选中个数写在触发按钮上，已选名单在面板里可见
+    await openTechPanel()
+    expect(trigger).toHaveTextContent('1')
+    const selected = await screen.findByRole('list', { name: '已选技术栈' })
+    expect(within(selected).getByRole('button', { name: '移除 Python' })).toBeInTheDocument()
+
+    // Escape 收起并把焦点还给触发按钮
+    await fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'))
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('排序可切到 star 降序，并同步 URL', async () => {

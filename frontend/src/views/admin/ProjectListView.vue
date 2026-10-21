@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { deleteProject, listAdminProjects, restoreProject, updateProject } from '@/api/projects'
 import {
+  LINK_TYPE_LABELS,
   PUBLISH_STATUS_LABELS,
   type AdminProjectListItem,
   type Link,
@@ -11,6 +12,7 @@ import {
 import { formatShortDate } from '@/utils/text'
 import { safeHttpUrl } from '@/utils/link'
 import AppBadge from '@/components/AppBadge.vue'
+import LinkTypeIcon from '@/components/LinkTypeIcon.vue'
 import ProjectCover from '@/components/ProjectCover.vue'
 import ProgressBadge from '@/components/ProgressBadge.vue'
 import PublishStatusBadge from '@/components/PublishStatusBadge.vue'
@@ -262,7 +264,7 @@ function linkHref(link: Link): string | null {
 
 function linkLabel(link: Link): string {
   const failed = link.last_status === 'failed'
-  const base = link.type === 'repo' ? '仓库' : '官网'
+  const base = LINK_TYPE_LABELS[link.type]
   return failed ? `${base}（检查失败，可能已失效）` : base
 }
 
@@ -418,11 +420,14 @@ onMounted(() => void load())
                     :aria-label="`${linkLabel(link)}（新窗口打开）`"
                     :title="linkLabel(link)"
                   >
-                    {{ link.type === 'repo' ? '仓库' : '官网' }}
+                    <LinkTypeIcon :type="link.type" />
+                    <span class="entry-text">{{ link.type === 'repo' ? '仓库' : '官网' }}</span>
                     <span v-if="link.last_status === 'failed'" aria-hidden="true">⚠</span>
                   </a>
                   <span v-else class="entry entry--failed" :title="linkLabel(link)">
-                    {{ link.type === 'repo' ? '仓库' : '官网' }} ⚠
+                    <LinkTypeIcon :type="link.type" />
+                    <span class="entry-text">{{ link.type === 'repo' ? '仓库' : '官网' }}</span>
+                    ⚠
                   </span>
                 </template>
                 <span v-if="!entryLinks(item).length" class="muted">—</span>
@@ -787,6 +792,9 @@ onMounted(() => void load())
   gap: var(--space-12);
 }
 .entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 13px;
   color: var(--c-primary-strong);
   text-decoration: none;

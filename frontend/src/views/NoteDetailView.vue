@@ -158,13 +158,9 @@ onBeforeUnmount(() => {
         </ul>
       </header>
 
-      <div class="layout">
-        <article class="card article">
-          <div ref="bodyEl" class="markdown" v-html="bodyHtml" />
-        </article>
-
-        <aside class="side" aria-live="polite">
-          <section v-if="toc.length" class="card panel" aria-labelledby="toc-title">
+      <div class="layout" :class="{ 'layout--two': !toc.length }">
+        <nav v-if="toc.length" class="side side--left" aria-labelledby="toc-title">
+          <section class="card panel" aria-labelledby="toc-title">
             <h2 id="toc-title" class="panel-title type-small">本页目录</h2>
             <ul class="toc">
               <li v-for="item in toc" :key="item.id" :class="`toc-${item.level}`">
@@ -177,7 +173,13 @@ onBeforeUnmount(() => {
               </li>
             </ul>
           </section>
+        </nav>
 
+        <article class="card article">
+          <div ref="bodyEl" class="markdown" v-html="bodyHtml" />
+        </article>
+
+        <aside class="side" aria-live="polite">
           <section class="card panel" aria-labelledby="project-title">
             <h2 id="project-title" class="panel-title type-small">所属项目</h2>
             <RouterLink :to="{ name: 'project-detail', params: { slug: note.project.slug } }" class="project-card">
@@ -262,14 +264,85 @@ onBeforeUnmount(() => {
   border-radius: var(--r-tag);
 }
 .layout {
+  /* 09/10 稿：三栏（目录 / 正文 / 所属项目），三栏同一行顶部对齐 */
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 260px;
+  grid-template-columns: 200px minmax(0, 1fr) 260px;
   gap: var(--space-24);
   align-items: start;
 }
-@media (max-width: 1023px) {
-  .layout {
+/* 显式指定轨道，避免「没有目录时正文被塞进 200px 左栏」 */
+.layout > .article {
+  grid-column: 2;
+  grid-row: 1;
+}
+.layout > .side--left {
+  grid-column: 1;
+  grid-row: 1;
+}
+.layout > .side:not(.side--left) {
+  grid-column: 3;
+  grid-row: 1;
+}
+/* 目录为空（正文没有 h2/h3）时退成两栏，不留 200px 空洞 */
+.layout--two {
+  grid-template-columns: minmax(0, 1fr) 260px;
+}
+.layout--two > .article {
+  grid-column: 1;
+}
+.layout--two > .side:not(.side--left) {
+  grid-column: 2;
+}
+.side--left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  position: sticky;
+  top: var(--space-24);
+}
+@media (max-width: 1180px) {
+  .layout,
+  .layout--two {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+  /* 中窄屏：所属项目卡落到正文下方，目录仍在左栏 */
+  .layout > .article,
+  .layout--two > .article {
+    grid-column: 2;
+  }
+  .layout > .side:not(.side--left),
+  .layout--two > .side:not(.side--left) {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .layout--two > .article {
+    grid-column: 1;
+  }
+  .layout--two > .side:not(.side--left) {
+    grid-column: 1;
+  }
+}
+@media (max-width: 899px) {
+  .layout,
+  .layout--two {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .layout > .article,
+  .layout > .side--left,
+  .layout > .side:not(.side--left),
+  .layout--two > .article,
+  .layout--two > .side:not(.side--left) {
+    grid-column: 1;
+    position: static;
+  }
+  .layout > .side--left {
+    grid-row: 1;
+  }
+  .layout > .article {
+    grid-row: 2;
+  }
+  .layout > .side:not(.side--left) {
+    grid-row: 3;
   }
 }
 .article {
