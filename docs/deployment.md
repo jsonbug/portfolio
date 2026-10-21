@@ -85,6 +85,41 @@ git pull && docker compose up -d --build
 - `migrate deploy` 只前进不后退：**回滚靠恢复备份**（§6），不要在生产上跑 `migrate reset`。
 - 手动查看迁移状态：`docker compose exec api npx prisma migrate status`。
 
+### 4.1 迁移中途失败（半迁移）的唯一可靠路径
+
+SQLite 下**迁移文件不是原子执行**（Prisma 也不会把多文件包进一个事务）：一个文件里有两条语句、
+或者一批迁移中途失败，库里就可能停在「表建了、索引没建」或「ALTER 做了、后一步没做」的状态。
+此时 `migrate deploy` 会一直失败，而 **`resolve --rolled-back` 单独救不了它**——它只把记录标成
+「已回滚」，库里的表/列还在，重跑就报 `table already exists` / `duplicate column name`。
+这一点用真库演练过（2026-10 截图迁移批），不是推测。
+
+唯一可靠的恢复路径（四步，顺序不能变）：
+
+```bash
+# 1. 停 api（避免启动时又跑一次 deploy）+ 恢复备份：连 -wal / -shm 一起删掉
+#    （SQLite 的 WAL 里可能还有未 checkpoint 的页，只换 .db 文件会配上一个旧的 -wal）
+docker compose stop api
+cd "$(docker volume inspect portfolio_sqlite-data --format '{{ .Mountpoint }}')"
+cp prod.db.bak-20261022T101500 prod.db
+rm -f prod.db-wal prod.db-shm
+
+# 2. 把失败的那条（或那批）迁移标成已回滚
+cd - && docker compose run --rm api npx prisma migrate resolve --rolled-back 20261022130200_project_screenshots_index
+
+# 3. 确认状态：失败项应该回到 pending，没有 failed 残留
+docker compose run --rm api npx prisma migrate status
+
+# 4. 修因（改迁移 SQL 或改镜像）后再 deploy
+docker compose run --rm api npx prisma migrate deploy
+docker compose up -d
+```
+
+**不要手工补列/补表再 `resolve --rolled-back`。** 那会让库结构与迁移记录对不上：下一份
+迁移可能重复加同一个列而失败，或者更糟——记录说「没跑过」、库说「已经有了」，两种状态都没人验过。
+手改库只允许在「已经从备份恢复」之后进行。
+
+为此约定：**一个迁移文件只放一条语句**（建表与建索引分开），把非原子窗口缩到最小。
+
 ## 5. 数据位置
 
 - SQLite 文件：命名卷 `sqlite-data` 内的 `/data/prod.db`（`DATABASE_URL=file:/data/prod.db`）。
@@ -222,6 +257,8 @@ ADMIN_PASSWORD='你的强口令' node scripts/smoke-compose.mjs --public      # 
 关于数据：脚本默认在结尾软删自己建的项目（避免在被复用的库上累积脏数据）；调试时加 `--keep-data` 保留。**它是写操作**，只应在一次性/可回收的库上跑（`docker compose down -v` 后重建即干净）。
 
 关于输出：`PASS`/`FAIL`/`SKIP` 三类分开计。`SKIP` 是「这条没执行」，**不计入通过也不计入失败**——把跳过印成 PASS 会让绿色失去意义。CI 的 `compose` job 跑同一份脚本（不带 `--public`）。
+
+**每次上线后手工跑一次 `--public`**：公网链接重检依赖外部站点可达性，放进 CI 只会得到随机红，所以它是发布流程的一个手工步骤，不是 CI 检查项。CI 里那行 `SKIP` 说明保留着，就是为了让人看见「这里少跑了一条」。
 
 > 先确认你访问的确实是这套容器：`docker compose port web 80` 与 `ss -ltn | grep <端口>` 对一下。
 > 宿主机上别的服务若占了同一个端口（本机就是 Trilium 占着 `127.0.0.1:8080`），`curl localhost:8080` 会打到它，

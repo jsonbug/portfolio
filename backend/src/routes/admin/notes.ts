@@ -11,6 +11,7 @@ import { prisma } from "../../lib/prisma.js";
 import { AppError } from "../../lib/errors.js";
 import { validate } from "../../lib/zod.js";
 import { recordSlugAlias } from "../../lib/slug.js";
+import { likePattern } from "../../lib/like.js";
 import { noteInclude, toAdminNoteDetail, toAdminNoteListItem } from "../../lib/serialize.js";
 import {
   AdminNoteListQuerySchema,
@@ -50,21 +51,29 @@ async function assertNoteSlugFree(slug: string, excludeId?: string): Promise<voi
   }
 }
 
+/**
+ * 命中的笔记 id（title/body_md/slug 包含关键字，字面量匹配）。
+ * 与前台同一手法：`$queryRaw ... LIKE ? ESCAPE '\'` 只取 id，排序与分页（skip/take/count）仍归 Prisma。
+ * 后台不限定发布状态——草稿也要能搜到。
+ */
+async function searchNoteIds(term: string): Promise<string[]> {
+  const pattern = likePattern(term);
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM notes
+    WHERE title LIKE ${pattern} ESCAPE '\\'
+       OR body_md LIKE ${pattern} ESCAPE '\\'
+       OR slug LIKE ${pattern} ESCAPE '\\'
+  `;
+  return rows.map((r) => r.id);
+}
+
 export async function adminNoteRoutes(app: FastifyInstance) {
   app.get("/notes", async (req) => {
     const q = validate(AdminNoteListQuerySchema, req.query);
     const where: Prisma.NoteWhereInput = {
       ...(q.publish_status ? { publish_status: q.publish_status } : {}),
       ...(q.project_id ? { project_id: q.project_id } : {}),
-      ...(q.search
-        ? {
-            OR: [
-              { title: { contains: q.search } },
-              { body_md: { contains: q.search } },
-              { slug: { contains: q.search } },
-            ],
-          }
-        : {}),
+      ...(q.search ? { id: { in: await searchNoteIds(q.search) } } : {}),
     };
 
     const [rows, total] = await prisma.$transaction([

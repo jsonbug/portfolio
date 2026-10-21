@@ -177,6 +177,41 @@ describe("GET /api/v1/admin/notes 与 DELETE", () => {
     expect(bySearch.json().total).toBe(1);
   });
 
+  it("search 按字面量匹配：_ 与 % 不当通配符（草稿也能搜到）", async () => {
+    const p = await project();
+    await createNote(app, token, { project_id: p.id, title: "v1_2 升级说明" });
+    await createNote(app, token, { project_id: p.id, title: "发布进度 80%" });
+    await createNote(app, token, { project_id: p.id, title: "普通笔记" });
+
+    const underscore = await app.inject({
+      method: "GET",
+      url: `/api/v1/admin/notes?search=${encodeURIComponent("v1_2")}`,
+      headers: auth(token),
+    });
+    expect(underscore.json().total).toBe(1);
+    expect(underscore.json().items.map((i: { title: string }) => i.title)).toEqual(["v1_2 升级说明"]);
+
+    // `%` 不转义时三篇全命中
+    const percent = await app.inject({
+      method: "GET",
+      url: `/api/v1/admin/notes?search=${encodeURIComponent("%")}`,
+      headers: auth(token),
+    });
+    expect(percent.json().total).toBe(1);
+    expect(percent.json().items.map((i: { title: string }) => i.title)).toEqual(["发布进度 80%"]);
+
+    // 正文也走同一转义路径
+    const p2 = await project("项目3");
+    await createNote(app, token, { project_id: p2.id, title: "正文命中", body_md: "折扣 50% 起" });
+    const byBody = await app.inject({
+      method: "GET",
+      url: `/api/v1/admin/notes?search=${encodeURIComponent("50%")}`,
+      headers: auth(token),
+    });
+    expect(byBody.json().total).toBe(1);
+    expect(byBody.json().items.map((i: { title: string }) => i.title)).toEqual(["正文命中"]);
+  });
+
   it("详情返回 body_md；列表项不含 body_md", async () => {
     const p = await project();
     const note = await createNote(app, token, { project_id: p.id, body_md: "## 正文" });

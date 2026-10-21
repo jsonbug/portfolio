@@ -312,6 +312,38 @@ describe("GET /api/v1/admin/projects（后台列表）", () => {
     expect(searched.json().items.map((i: { name: string }) => i.name)).toEqual(["归档清单"]);
   });
 
+  it("search 按字面量匹配：% 与 _ 不当通配符（转义走 LIKE ? ESCAPE）", async () => {
+    await createProject(app, token, { name: "完成度 100% 的项目" });
+    await createProject(app, token, { name: "a_b 命名约定" });
+    await createProject(app, token, { name: "普通项目" });
+
+    const percent = await app.inject({
+      method: "GET",
+      url: `/api/v1/admin/projects?search=${encodeURIComponent("%")}`,
+      headers: auth(token),
+    });
+    // 不转义的话 `%` 是「匹配任意」：三个项目全命中
+    expect(percent.json().total).toBe(1);
+    expect(percent.json().items.map((i: { name: string }) => i.name)).toEqual(["完成度 100% 的项目"]);
+
+    const underscore = await app.inject({
+      method: "GET",
+      url: `/api/v1/admin/projects?search=${encodeURIComponent("a_b")}`,
+      headers: auth(token),
+    });
+    expect(underscore.json().total).toBe(1);
+    expect(underscore.json().items.map((i: { name: string }) => i.name)).toEqual(["a_b 命名约定"]);
+
+    // 计数口径与列表同源：分段计数也是转义后的集合（all = draft + published + archived）
+    const counts = await app.inject({
+      method: "GET",
+      url: `/api/v1/admin/projects?search=${encodeURIComponent("%")}&publish_status=draft`,
+      headers: auth(token),
+    });
+    expect(counts.json().counts.all).toBe(1);
+    expect(counts.json().total).toBe(1);
+  });
+
   it("后台列表项带 publish_status / published_at / deleted_at", async () => {
     await createProject(app, token, { name: "后台字段", publish_status: "published" });
     const res = await app.inject({ method: "GET", url: "/api/v1/admin/projects", headers: auth(token) });

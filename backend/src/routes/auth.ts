@@ -13,7 +13,7 @@ export async function authRoutes(app: FastifyInstance) {
     if (username !== env.adminUsername || !verifyPassword(password, env.adminPasswordHash)) {
       // 统一提示，不暴露是用户名错还是口令错；
       // 但配置本身有问题时附一句，否则「摘要被插值吃掉」会被当成口令记错了
-      throw new AppError("UNAUTHORIZED", `用户名或密码错误${loginConfigHint(configWarnings) ?? ""}`);
+      throw new AppError("UNAUTHORIZED", `用户名或密码错误${loginConfigHint(configWarnings, env.nodeEnv) ?? ""}`);
     }
     // 单管理员：sub 恒为 "admin"
     const token = signToken("admin", env.authSecret, env.authTtlSeconds);

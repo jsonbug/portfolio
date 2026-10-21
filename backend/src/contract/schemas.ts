@@ -170,12 +170,28 @@ export type MetadataResponse = z.infer<typeof MetadataResponseSchema>;
 //
 // 只存原图 URL（派生尺寸交前端 object-fit，后端不做第二套图片管线）；
 // 整体替换语义同 /metadata，顺序即 sort；每项目 ≤10 张；caption 可空 ≤80 字。
+// 截图 URL：必须是能真加载的 http(s) 绝对地址。
+// 原来只做 /^https?:\/\// 前缀测试，于是 `https://`（无主机）与 `http://e.com/a b.png`（空白）
+// 都能入库，后台回「保存成功」、前台是空白格——正常误用下的**静默失败**，定 P1。
+// 三条拒绝：空白字符、`new URL()` 解不开（含 `//e.com/a.png` 这类协议相对 URL）、
+// 协议不是 http(s) 或 host 为空（`https://` 走 URL 构造失败，`https:///x` 走 host 空检查）。
 const screenshotUrlSchema = z
   .string()
   .trim()
   .min(1)
   .max(2048)
-  .refine((v) => /^https?:\/\//i.test(v), { message: "必须是 http(s) 地址" });
+  .superRefine((v, ctx) => {
+    const fail = (message: string) => ctx.addIssue({ code: "custom", message });
+    if (/\s/.test(v)) return fail("地址里不能有空白字符");
+    let parsed: URL;
+    try {
+      parsed = new URL(v);
+    } catch {
+      return fail("必须是合法的 http(s) 绝对地址（例如 https://cdn.example.com/shot.png）");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return fail("必须是 http(s) 地址");
+    if (!parsed.hostname) return fail("地址缺少主机名");
+  });
 
 export const SCREENSHOT_MAX = 10;
 export const SCREENSHOT_CAPTION_MAX = 80;

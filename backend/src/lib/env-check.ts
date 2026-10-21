@@ -112,11 +112,16 @@ export function formatIssuesWarning(issues: EnvIssue[], nodeEnv: string, allowed
 }
 
 /**
- * 登录失败时附在 message 后的可读提示：只在配置确实有问题时给。
+ * 登录失败时附在 message 后的可读提示：只在「配置确实有问题」且「不是生产」时给。
  * 不给的话，「口令摘要被 compose 插值吃掉」表现为「用户名或密码错了几十遍」，
  * 是这套系统里最难自查的故障。
+ *
+ * 生产环境**恒返回 null**：即使 `ALLOW_WEAK_SECRET=1` 显式放行（那里只打 WARN 日志），
+ * 401 响应体也必须与基线（“用户名或密码错误”）字节一致——响应体是对外接口，
+ * 启动日志只对运维可见，两者的读者和风险面不一样。
  */
-export function loginConfigHint(issues: EnvIssue[]): string | null {
+export function loginConfigHint(issues: EnvIssue[], nodeEnv: string): string | null {
+  if (nodeEnv === "production") return null;
   if (issues.length === 0) return null;
   return `（服务端配置校验未通过：${issues.map((i) => i.name).join("、")}，登录可能始终失败；见启动日志）`;
 }

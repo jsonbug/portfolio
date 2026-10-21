@@ -24,12 +24,13 @@ import {
 
 // 4xx 兜底映射：框架层错误（非法 JSON body、payload 过大、限流等）不带契约 code，
 // 按状态码落到 §1.3 值域里最接近的一个；表里没有的 4xx 也归 VALIDATION_ERROR（仍是 4xx 语义）。
+// **405 不在表里**：未知方法统一由 notFoundHandler 返回 404 NOT_FOUND（见 test/health.test.ts 的冻结测试）。
+// `METHOD_NOT_ALLOWED` 仍留在 §1.3 值域里作为保留值（当前不产生），但不再向它映射。
 const CLIENT_ERROR_CODES: Partial<Record<number, ErrorCode>> = {
   400: "VALIDATION_ERROR",
   401: "UNAUTHORIZED",
   403: "FORBIDDEN",
   404: "NOT_FOUND",
-  405: "METHOD_NOT_ALLOWED",
   409: "CONFLICT",
 };
 

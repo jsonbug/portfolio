@@ -14,3 +14,8 @@
 export function escapeLike(input: string): string {
   return input.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
+
+/** 包含式模糊匹配的 pattern（先转义再包 `%`）——与 `LIKE ? ESCAPE '\'` 配套使用。 */
+export function likePattern(term: string): string {
+  return `%${escapeLike(term)}%`;
+}
