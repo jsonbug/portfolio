@@ -2,14 +2,16 @@
 //   POST   /admin/projects/:id/links  新增（sort 缺省 = 该分类末尾）
 //   PATCH  /admin/links/:id           局部更新
 //   DELETE /admin/links/:id           删除
-// 链接健康检查（last_status / last_http_status / last_checked_at）在阶段 2.6 接入，
-// 本阶段读接口已预留字段，写入路径只允许服务端维护。
-// 契约见 docs/api-contract.md §4.3。
+//   POST   /admin/links/:id/check     立即重检（B16，同步等结果，最长 ~8s）
+// 新增 / 改 url 后异步触发健康检查（不阻塞响应，响应里 last_status 仍为 unknown）；
+// last_status / last_http_status / last_checked_at 由服务端维护，写接口不接受这三个字段。
+// 契约见 docs/api-contract.md §4.4。
 import type { FastifyInstance } from "fastify";
 import { prisma } from "../../lib/prisma.js";
 import { AppError } from "../../lib/errors.js";
 import { validate } from "../../lib/zod.js";
 import { toLink } from "../../lib/serialize.js";
+import { runLinkCheck, scheduleLinkCheck } from "../../lib/link-check.js";
 import { LinkCreateSchema, LinkUpdateSchema } from "../../contract/schemas.js";
 
 export async function adminLinkRoutes(app: FastifyInstance) {
@@ -33,6 +35,7 @@ export async function adminLinkRoutes(app: FastifyInstance) {
     const link = await prisma.projectLink.create({
       data: { project_id: id, type: data.type, url: data.url, label: data.label ?? null, sort },
     });
+    scheduleLinkCheck(link.id);
     reply.status(201);
     return toLink(link);
   });
@@ -52,7 +55,17 @@ export async function adminLinkRoutes(app: FastifyInstance) {
         ...(patch.sort !== undefined ? { sort: patch.sort } : {}),
       },
     });
+    // url 变了才重检（纯改标签/排序没必要打网络）
+    if (patch.url !== undefined) scheduleLinkCheck(link.id);
     return toLink(link);
+  });
+
+  // 立即重检：同步等待结果并返回更新后的链接（后台「重检」按钮）
+  app.post("/links/:id/check", async (req) => {
+    const { id } = req.params as { id: string };
+    const link = await runLinkCheck(id);
+    if (!link) throw new AppError("NOT_FOUND", "链接不存在");
+    return link;
   });
 
   app.delete("/links/:id", async (req, reply) => {

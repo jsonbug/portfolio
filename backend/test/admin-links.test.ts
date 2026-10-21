@@ -37,7 +37,7 @@ describe("POST /api/v1/admin/projects/:id/links", () => {
       type: "repo",
       label: "GitHub",
       sort: 0,
-      last_status: null,
+      last_status: "unknown",
       last_http_status: null,
       last_checked_at: null,
     });

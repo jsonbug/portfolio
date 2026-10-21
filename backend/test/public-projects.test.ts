@@ -191,7 +191,7 @@ describe("GET /api/v1/projects/:slug（前台详情）", () => {
     expect(body.description_md).toBe("# 正文");
     expect(body.notes.map((n) => n.title)).toEqual(["已发布笔记"]);
     expect(body.metadata.map((m) => m.key_label)).toEqual(["线上地址", "代码行数"]);
-    expect(body.links[0]).toMatchObject({ type: "repo", label: "GitHub", last_status: null });
+    expect(body.links[0]).toMatchObject({ type: "repo", label: "GitHub", last_status: "unknown" });
     expect("publish_status" in body).toBe(false);
     expect("cover_source_url" in body).toBe(false);
   });

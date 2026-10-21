@@ -78,7 +78,7 @@ model ProjectLink {
   url              String // 应用层校验 http/https
   label            String?
   sort             Int       @default(0)
-  last_status      String? // ok | timeout | error（null=未检查）
+  last_status      String? // ok | failed（null = 从未检查，wire 上序列化为 unknown）
   last_http_status Int?
   last_checked_at  DateTime?
   created_at       DateTime  @default(now())
