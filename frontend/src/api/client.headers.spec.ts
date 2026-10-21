@@ -29,7 +29,7 @@ vi.mock('@/mocks', () => ({
 
 const { deleteProject, restoreProject, updateProject } = await import('./projects')
 const { deleteLink, addLink } = await import('./links')
-const { deleteNote, upsertNote } = await import('./notes')
+const { createNote, deleteNote } = await import('./notes')
 const { getAuthToken, setAuthToken } = await import('./client')
 
 function lastCall(): CapturedCall {
@@ -77,7 +77,7 @@ describe('request 请求头契约', () => {
     await addLink('p1', { type: 'repo', url: 'https://example.com' })
     expect(lastCall().headers['Content-Type']).toBe('application/json')
 
-    await upsertNote('p1', { title: 't', content: 'c' })
+    await createNote({ project_id: 'p1', slug: 'note-a', title: 't', body_md: 'c' })
     expect(lastCall().headers['Content-Type']).toBe('application/json')
   })
 

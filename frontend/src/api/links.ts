@@ -8,6 +8,7 @@ export function addLink(projectId: string, input: LinkCreate): Promise<Link> {
   })
 }
 
+/** `sort` 参与排序：越小越靠前（前台按升序渲染）。 */
 export function updateLink(id: string, input: LinkUpdate): Promise<Link> {
   return request<Link>(`/admin/links/${encodeURIComponent(id)}`, {
     method: 'PATCH',

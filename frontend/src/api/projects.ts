@@ -1,55 +1,57 @@
 import { request } from './client'
+import { buildQueryString } from './query'
 import type {
   AdminProjectDetail,
   AdminProjectListItem,
   ListEnvelope,
+  MetadataItemInput,
+  Progress,
   ProjectCreate,
   ProjectDetail,
-  ProjectListItem,
+  ProjectListCounts,
+  ProjectListEnvelope,
+  ProjectSort,
   ProjectUpdate,
+  PublishStatus,
 } from '@/types'
 
+/** 前台列表查询：`technology` 为数组，按重复参数下发。 */
 export interface PublicProjectQuery {
   page?: number
   pageSize?: number
   search?: string
-  technology?: string
+  technology?: string[]
+  progress?: Progress
+  sort?: ProjectSort
 }
 
+/** 后台列表查询：曝光状态与进展两个维度独立过滤。 */
 export interface AdminProjectQuery {
   page?: number
   pageSize?: number
-  /** true 时包含已软删除项目（含 deletedAt）。 */
-  includeDeleted?: boolean
-  status?: string
+  publish_status?: PublishStatus
+  progress?: Progress
   search?: string
-}
-
-function toQueryString(query: object): string {
-  const params = new URLSearchParams()
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== null && value !== '') {
-      params.set(key, String(value))
-    }
-  }
-  const s = params.toString()
-  return s ? `?${s}` : ''
+  /** true 时包含已软删除项目（含 deleted_at）。 */
+  includeDeleted?: boolean
 }
 
 // ---------- 前台（公开） ----------
 
-export function listPublicProjects(query: PublicProjectQuery = {}): Promise<ListEnvelope<ProjectListItem>> {
-  return request<ListEnvelope<ProjectListItem>>(`/projects${toQueryString(query)}`)
+/** 已发布项目列表 + 分段计数（计数在 search/technology 过滤后、progress 过滤前统计）。 */
+export function listPublicProjects(query: PublicProjectQuery = {}): Promise<ProjectListEnvelope> {
+  return request<ProjectListEnvelope>(`/projects${buildQueryString({ ...query })}`)
 }
 
-export function getPublicProject(id: string): Promise<ProjectDetail> {
-  return request<ProjectDetail>(`/projects/${encodeURIComponent(id)}`)
+/** 按 slug 取项目详情；旧 slug 由浏览器跟随 301 落到新 slug（mock 同构）。 */
+export function getPublicProject(slug: string): Promise<ProjectDetail> {
+  return request<ProjectDetail>(`/projects/${encodeURIComponent(slug)}`)
 }
 
 // ---------- 后台（Bearer） ----------
 
 export function listAdminProjects(query: AdminProjectQuery = {}): Promise<ListEnvelope<AdminProjectListItem>> {
-  return request<ListEnvelope<AdminProjectListItem>>(`/admin/projects${toQueryString(query)}`)
+  return request<ListEnvelope<AdminProjectListItem>>(`/admin/projects${buildQueryString({ ...query })}`)
 }
 
 export function getAdminProject(id: string): Promise<AdminProjectDetail> {
@@ -77,3 +79,16 @@ export function deleteProject(id: string): Promise<void> {
 export function restoreProject(id: string): Promise<AdminProjectDetail> {
   return request<AdminProjectDetail>(`/admin/projects/${encodeURIComponent(id)}/restore`, { method: 'POST' })
 }
+
+/** 整体替换自定义元数据（KV），数组顺序即 `sort`。 */
+export function replaceProjectMetadata(
+  id: string,
+  items: MetadataItemInput[],
+): Promise<AdminProjectDetail> {
+  return request<AdminProjectDetail>(`/admin/projects/${encodeURIComponent(id)}/metadata`, {
+    method: 'PUT',
+    body: JSON.stringify({ items }),
+  })
+}
+
+export type { ProjectListCounts }

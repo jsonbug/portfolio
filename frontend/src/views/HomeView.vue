@@ -38,18 +38,18 @@ onMounted(() => void load())
 
     <ul v-else class="grid">
       <li v-for="item in items" :key="item.id">
-        <RouterLink class="card project-card" :to="{ name: 'project-detail', params: { id: item.id } }">
-          <ProjectCover :name="item.name" :cover-image="item.coverImage" variant="card" />
+        <RouterLink class="card project-card" :to="{ name: 'project-detail', params: { slug: item.slug } }">
+          <ProjectCover :name="item.name" :cover-image="item.cover_image_url" variant="card" />
           <div class="card-body">
             <h2 class="project-name">{{ item.name }}</h2>
-            <p v-if="item.tagline" class="project-tagline">{{ item.tagline }}</p>
+            <p v-if="item.summary" class="project-tagline">{{ item.summary }}</p>
             <div class="project-meta">
-              <span v-if="item.technologies.length" class="tags">
-                <span v-for="tech in item.technologies" :key="tech" class="tag">{{ tech }}</span>
+              <span v-if="item.tech_stack.length" class="tags">
+                <span v-for="tech in item.tech_stack" :key="tech" class="tag">{{ tech }}</span>
               </span>
               <span class="meta">
                 <span v-if="item.stars != null">★ {{ item.stars }}</span>
-                <span>{{ formatDate(item.lastActivityAt ?? item.updatedAt) }}</span>
+                <span>{{ formatDate(item.last_updated_at ?? item.updated_at) }}</span>
               </span>
             </div>
           </div>
