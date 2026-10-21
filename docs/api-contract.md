@@ -1,6 +1,6 @@
 # API 契约（冻结 · v1.2）
 
-> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1；v1.2.2 补链接健康检查 §4.4 与两套 counts 对称口径）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
+> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1；v1.2.2 补链接健康检查 §4.4 与两套 counts 对称口径；v1.2.3 补分页越界、`details[].code`、`NoteSummary.excerpt` 三处条文，见 1.4）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
 > 代码参考（可执行形态）：`backend/src/contract/schemas.ts`；本文档与 `schemas.ts` 是同一契约的两种载体，
 > 任何改动都是契约变更，需在 issue 中说明。
 >
@@ -19,7 +19,7 @@
 | 数据格式 | JSON（请求 `Content-Type: application/json`） |
 | 时间 | ISO-8601（`2026-10-21T11:00:00.000Z`），库内存 unix ms |
 | 认证 | 写接口 `/api/v1/admin/**` 需 `Authorization: Bearer <token>`；前台读接口公开 |
-| 分页 | offset 分页：`page`（≥1，默认 1）、`pageSize`（1..100，默认 20） |
+| 分页 | offset 分页：`page`（≥1，默认 1）、`pageSize`（1..100，默认 20）；越界返回空页而非报错，口径见 1.4 |
 | PATCH 语义 | 未传字段忽略；显式 `null` 清空 nullable 字段；数组字段传值即整体替换（`[]` 清空） |
 | 字段命名 | **wire 上一律 `snake_case`**（与第五节表结构同名）；前端不做 camelCase 映射 |
 | Markdown | 后端只存原文（`description_md` / `body_md`），**不做 HTML 净化**；渲染侧（前端 DOMPurify，禁 raw HTML）负责 XSS 过滤（N2） |
@@ -46,6 +46,8 @@
 }
 ```
 
+> `details[].code` 透传 zod issue code，**不承诺稳定，客户端不得分支** —— 见 1.4 第 2 条。
+
 ### 1.3 错误码与 HTTP 状态（冻结）
 
 | code | HTTP | 触发场景 |
@@ -58,6 +60,34 @@
 | `INVALID_STATUS_TRANSITION` | 400 | 曝光状态迁移不合法（如 `draft` → `archived`） |
 | `METHOD_NOT_ALLOWED` | 405 | 方法不支持 |
 | `INTERNAL_ERROR` | 500 | 未预期错误（日志含 requestId，响应不回传堆栈） |
+
+### 1.4 分页越界、错误体细节与摘要字段（v1.2.3 冻结）
+
+本节三条此前只有实现、没有条文，是前后端各自写一套期望值的根因。自 v1.2.3 起以本条文为唯一口径，实现与契约测试（`frontend/test/contract/`）均以此为准。
+
+**1. 分页：越界不是错误**
+
+- `page` / `pageSize` 非数字、`page < 1`、`pageSize ∉ [1, 100]` → **400** `VALIDATION_ERROR`（`details[].field` 指向出错参数）。
+- `page > totalPages` → **200**，`items: []`，`total` 与 `totalPages` 为真值（不得归零，也不返回 404）。
+
+```json
+{ "items": [], "page": 9, "pageSize": 20, "total": 3, "totalPages": 1 }
+```
+
+判定顺序：**先校验格式与范围（400），再执行查询、判定是否越界（200 空页）**。
+
+**2. `details[]`：结构保留，`code` 不承诺稳定**
+
+- `details[]` 结构保留（`field` / `code` / `message`）。
+- `code` 透传 zod issue code，**不承诺稳定，客户端不得分支**（`$ grep` 可验）。
+- 客户端只允许依赖封套的 `error.code`（见 1.3）判类型；`details[].message` 仅用于直接展示，不参与任何分支判断。
+
+**3. `excerpt`：`NoteSummary` 必带字段**
+
+- 定义：`body_md` **去 Markdown 后取前 120 字，超长加省略号，空正文为 `null`**。
+- `NoteSummary` **必带此字段**：`GET /notes` 的 `items[]`、`GET /projects/:slug` 的 `notes[]`、后台笔记列表、后台项目详情的 `notes[]` 一律带。
+- 可验证：取值只允许 `null` 或长度 ≤ 121 的字符串（120 字 + 单字符省略号 `…`），且不含 Markdown 记号（`#` / `**` / 反引号 / 链接语法）。
+- `GET /notes/:slug`（3.4）已返回 `body_md`，`excerpt` 在该响应中**可选**：客户端不得依赖其存在或不存在，契约测试也不得对该端点断言 `excerpt` 的有无。
 
 ## 2. 枚举（冻结）
 
@@ -175,6 +205,7 @@ draft ──publish──▶ published ──archive──▶ archived
       "id": "n1", "slug": "note-1", "title": "复盘",
       "project": { "slug": "portfolio-platform", "name": "项目展示平台" },
       "tags": ["复盘"], "published_at": "2026-09-10T00:00:00.000Z",
+      "excerpt": "这次把做过的项目收拢成一页一页……",
       "created_at": "2026-09-09T00:00:00.000Z", "updated_at": "2026-09-10T00:00:00.000Z"
     }
   ]
@@ -183,6 +214,7 @@ draft ──publish──▶ published ──archive──▶ archived
 
 - 固定元数据列（`role` / `license` / `start_year` / `team_size`）为 `null` 时前端整行不渲染
 - `metadata` 为自定义 KV，按 `sort` 升序；`notes` 只含已发布笔记，按发布时间倒序
+- `notes[]` 为 `NoteSummary`，**必带 `excerpt`**（定义见 1.4 第 3 条）
 - **旧 slug**（改名过）：`301 Moved Permanently`，`Location: /api/v1/projects/<new-slug>`；目标不可见时 404
 
 ### 3.3 `GET /notes` — 笔记列表
@@ -193,7 +225,7 @@ draft ──publish──▶ published ──archive──▶ archived
 | `tag` | 标签精确匹配 |
 | `page` / `pageSize` | 分页 |
 
-`items[]` 为 `NoteSummary`（同上 `notes` 元素结构），按 `published_at` 倒序（空值再按 `created_at` 倒序）。
+`items[]` 为 `NoteSummary`（同上 `notes` 元素结构，含 `excerpt`，见 1.4 第 3 条），按 `published_at` 倒序（空值再按 `created_at` 倒序）。
 
 > 分组口径：F4 的「左栏按项目分组」由前端在已取回的列表上分组，本接口**不提供**分组聚合或 `project` 过滤参数。
 > 笔记量级小（个人站），前端用 `pageSize=100` 一次取全后分组；跨页分组的语义不在本契约内。
@@ -204,7 +236,7 @@ draft ──publish──▶ published ──archive──▶ archived
 
 ### 3.4 `GET /notes/:slug` — 笔记详情
 
-`NoteSummary` + `body_md`；旧 slug 301；草稿或所属项目不可见 → 404。
+`NoteSummary` + `body_md`；旧 slug 301；草稿或所属项目不可见 → 404。`excerpt` 在本响应中可选（见 1.4 第 3 条），客户端不得依赖其有无。
 
 ### 3.5 `GET /technologies` — 技术栈标签
 
@@ -365,3 +397,4 @@ IPv4 映射（`::ffff:`）、NAT64、6to4 里嵌入的 IPv4 同样按上述规�
 | v1.2 | 本文件：第五节口径落地，`publish_status`/`progress` 双字段、slug 定位 + 301、笔记 N:1、元数据固定列 + KV、链接枚举调整、`counts` 分段统计 |
 | v1.2.1 | ALICE-8 冻结核对：后台 `counts`、后台详情笔记 `publish_status`、排序空值、search 字段、login 公开性、slug 命名空间、snake_case、Markdown 责任；补预留端点表 |
 | v1.2.2 | B16 链接健康检查落地：`last_status` 改为 `ok`/`failed`/`unknown`（原 `null` 不再出现）、判定与超时口径、SSRF 防护、`POST /admin/links/:id/check`（见 4.4）；两套 `counts` 对称口径写明；`/notes` 超 100 篇截断提示 |
+| v1.2.3 | 补三处此前只有实现没有条文的细节（见 1.4）：① 分页 `page > totalPages` 返回 200 + `items: []` + 真 `total` / `totalPages`，格式与范围错误仍 400；② `details[]` 结构保留、`code` 透传 zod issue code 且不承诺稳定、客户端不得分支；③ `NoteSummary.excerpt`（去 Markdown 取前 120 字、超长加省略号、空正文 `null`）为必带字段 |
