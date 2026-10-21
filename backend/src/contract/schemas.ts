@@ -18,7 +18,7 @@ export type Progress = z.infer<typeof ProgressSchema>;
 export const LinkTypeSchema = z.enum(["repo", "site", "docs", "demo", "other"]);
 export type LinkType = z.infer<typeof LinkTypeSchema>;
 
-export const LinkStatusSchema = z.enum(["ok", "timeout", "error"]);
+export const LinkStatusSchema = z.enum(["ok", "failed", "unknown"]);
 export type LinkStatus = z.infer<typeof LinkStatusSchema>;
 
 export const NotePublishStatusSchema = z.enum(["draft", "published"]);
@@ -71,7 +71,7 @@ export const LinkSchema = z.object({
   label: z.string().nullable(),
   url: z.string(),
   sort: z.number().int(),
-  last_status: LinkStatusSchema.nullable(),
+  last_status: LinkStatusSchema,
   last_http_status: z.number().int().nullable(),
   last_checked_at: isoDatetime().nullable(),
   created_at: isoDatetime(),

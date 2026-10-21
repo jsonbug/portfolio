@@ -1,6 +1,6 @@
 # API 契约（冻结 · v1.2）
 
-> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1，见第 5 节）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
+> 状态：**已冻结**（ALICE-7 阶段 1 数据层交付；ALICE-8 冻结核对补 v1.2.1；v1.2.2 补链接健康检查 §4.4 与两套 counts 对称口径）。口径来源：《开发计划 v1.2》第五节数据模型与路由表。
 > 代码参考（可执行形态）：`backend/src/contract/schemas.ts`；本文档与 `schemas.ts` 是同一契约的两种载体，
 > 任何改动都是契约变更，需在 issue 中说明。
 >
@@ -131,7 +131,7 @@ draft ──publish──▶ published ──archive──▶ archived
           "label": "GitHub",
           "url": "https://github.com/jsonbug/portfolio",
           "sort": 0,
-          "last_status": null,
+          "last_status": "unknown",
           "last_http_status": null,
           "last_checked_at": null,
           "created_at": "2026-09-01T00:00:00.000Z"
@@ -151,6 +151,10 @@ draft ──publish──▶ published ──archive──▶ archived
 
 `counts`（v1.2 新增，F6 分段数字用）：按「search + technology」过滤后、`progress` 过滤前的可见项目集合统计；
 前台没有归档分段，`all / ongoing / launched` 三项之和 = `counts.all`。
+
+> **两套 `counts` 口径对称（冻结）**：前台的 `counts` 按 `progress` 分段，后台的 `counts` 按 `publish_status` 分段
+> （见 4.1），两者都是「按 `search` 等搜索条件过滤后、按分段条件过滤前」的集合统计，
+> **都不是全站总数**（前台不含草稿/归档/软删，后台含草稿但受 `includeDeleted` 影响）。
 
 公开列表项**不含** `publish_status` / `published_at` / `deleted_at` / `cover_source_url`。
 
@@ -193,6 +197,10 @@ draft ──publish──▶ published ──archive──▶ archived
 
 > 分组口径：F4 的「左栏按项目分组」由前端在已取回的列表上分组，本接口**不提供**分组聚合或 `project` 过滤参数。
 > 笔记量级小（个人站），前端用 `pageSize=100` 一次取全后分组；跨页分组的语义不在本契约内。
+>
+> ⚠️ **`pageSize` 上限是 100（见 1. 通用约定）**：笔记超过 100 篇时单次只能拿到 100 条，
+> 前端必须在 `total > 100` 时提示「笔记较多，分组仅显示最近 100 篇」，不能静默丢数据。
+> 需要全量时由前端循环翻页（`page++` 直至 `page > totalPages`）后自行合并。
 
 ### 3.4 `GET /notes/:slug` — 笔记详情
 
@@ -235,6 +243,7 @@ draft ──publish──▶ published ──archive──▶ archived
 
 口径：`search` + `includeDeleted` 过滤后、`publish_status` / `progress` 过滤前的集合；`all = draft + published + archived`。
 分段切换不改 `counts`（分段数字始终是全部口径），搜索会重算。
+与前台 `counts`（3.1）**方向对称**：都是「搜索过滤后、分段条件过滤前」，都不是全站总数。
 
 `POST` / `PATCH` 请求体（`ProjectUpsert`）：
 
@@ -257,13 +266,44 @@ draft ──publish──▶ published ──archive──▶ archived
 **slug 改名规则（B15）**：项目发布过（`published_at` 非空）→ 旧 slug 记入 `slug_aliases`，旧地址 301；
 从未发布的草稿改名不留历史。
 
-**链接**（独立端点，`sort` 缺省追加到末尾；健康检查字段只读）：
+**链接**（独立端点，`sort` 缺省追加到末尾）：
 
 | 方法 | 路径 |
 |---|---|
 | POST | `/admin/projects/:id/links` → 201 |
 | PATCH | `/admin/links/:id` |
 | DELETE | `/admin/links/:id` → 204 |
+| POST | `/admin/links/:id/check` → 200，立即重检（见 4.4） |
+
+### 4.4 链接健康检查（B16，v1.2.2 新增）
+
+`Link` 上的三个只读字段由服务端维护，**写接口不接受**（传了忽略，不报错）：
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `last_status` | `"ok"` \| `"failed"` \| `"unknown"` | 上次检查结论；`unknown` = 从未检查（库内 `null`） |
+| `last_http_status` | int \| null | 最后一次收到的 HTTP 状态码；未收到响应（超时/DNS 失败/被拦截）为 `null` |
+| `last_checked_at` | ISO \| null | 上次检查时间 |
+
+**判定口径**：`2xx` → `ok`；其余全部 `failed`——非 2xx（含 3xx 无 `Location`、4xx、5xx）、超时、DNS 解析失败、连接被拒/重置、
+TLS 证书错误、被 SSRF 防护拦截。任何非 2xx 响应都写入 `last_http_status`。
+
+**超时与跳转**：单跳 `5s`（连接 + 响应头，`LINK_CHECK_TIMEOUT_MS`），整体 `8s`（`LINK_CHECK_TOTAL_TIMEOUT_MS`）；
+重定向最多 `3` 跳（`LINK_CHECK_MAX_REDIRECTS`），**每一跳都重新解析并重校验**。只请求响应头，不下载 body。
+
+**触发时机**：
+
+1. `POST /admin/projects/:id/links` 与 `PATCH /admin/links/:id`（仅当 `url` 变化）**异步**触发检查，
+   不阻塞响应——保存响应里的 `last_status` 可能仍是 `unknown`，前端据此保守展示，不要把它当成刚检结果。
+2. `POST /admin/links/:id/check` **同步**等待并返回更新后的 `Link`（最长约 8s），供后台「重检」按钮用。
+
+**SSRF 防护（不可关闭）**：仅 `http` / `https`；主机名解析为 IP 后逐个校验，命中环回（`127/8`、`::1`）、
+私网（`10/8`、`172.16/12`、`192.168/16`、`fc00::/7`）、链路本地与云元数据（`169.254/16` 含 `169.254.169.254`、`fe80::/10`）、
+CGNAT、组播、保留/文档段的地址一律不发起连接，直接记 `failed`（`last_http_status` 为 `null`）；
+IPv4 映射（`::ffff:`）、NAT64、6to4 里嵌入的 IPv4 同样按上述规则判定。
+连接把 DNS 固定到已校验的 IP（校验与连接同一地址，防 DNS rebinding），重定向后的第二次解析同样重校验。
+
+> 后台链接列的失效态与前台 F9 灰显都只认 `last_status === "failed"`；`unknown` 不灰显（没数据不等于坏了）。
 
 ### 4.2 笔记
 
@@ -312,9 +352,10 @@ draft ──publish──▶ published ──archive──▶ archived
 
 | 方法 | 路径 | 落地阶段 |
 |---|---|---|
-| POST | `/admin/links/:id/check` | 2.6（B16 立即重检；返回更新后的 `Link`，`last_status`/`last_http_status`/`last_checked_at` 仍只读） |
 | GET | `/admin/overview` | 2.x（B12 P1 概览计数） |
 | GET/PATCH | `/admin/settings` | 2.x（B13 P1 站点设置） |
+
+> `POST /admin/links/:id/check`（B16）已在 v1.2.2 实现，见 4.4，不再属于预留。
 
 ## 6. 变更记录
 
@@ -323,3 +364,4 @@ draft ──publish──▶ published ──archive──▶ archived
 | v1.0 | ALICE-6 MVP 冻结（单字段 `status`、笔记 1:1、`website` 链接类型、camelCase 字段） |
 | v1.2 | 本文件：第五节口径落地，`publish_status`/`progress` 双字段、slug 定位 + 301、笔记 N:1、元数据固定列 + KV、链接枚举调整、`counts` 分段统计 |
 | v1.2.1 | ALICE-8 冻结核对：后台 `counts`、后台详情笔记 `publish_status`、排序空值、search 字段、login 公开性、slug 命名空间、snake_case、Markdown 责任；补预留端点表 |
+| v1.2.2 | B16 链接健康检查落地：`last_status` 改为 `ok`/`failed`/`unknown`（原 `null` 不再出现）、判定与超时口径、SSRF 防护、`POST /admin/links/:id/check`（见 4.4）；两套 `counts` 对称口径写明；`/notes` 超 100 篇截断提示 |

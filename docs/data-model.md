@@ -55,7 +55,7 @@ erDiagram
         string url
         string label
         int sort
-        string last_status "ok|timeout|error"
+        string last_status "ok|failed"  // null = 从未检查（wire 上为 unknown）
         int last_http_status
         datetime last_checked_at
     }
@@ -96,7 +96,7 @@ erDiagram
 |---|---|---|
 | `projects` | `UNIQUE(slug)`；索引 `(publish_status, deleted_at)`、`(name)` | 曝光 `publish_status` 与进展 `progress` 正交；`deleted_at` 软删除 |
 | `project_tech_stack` | `UNIQUE(project_id, name)`；索引 `(name)` | 技术栈并入项目（不再有独立 `technology` 表）；`sort` 即展示顺序 |
-| `project_links` | 索引 `(project_id)` | `type` 枚举 v1.2 为 `repo/site/docs/demo/other`；`last_*` 由健康检查（阶段 2.6）维护 |
+| `project_links` | 索引 `(project_id)` | `type` 枚举 v1.2 为 `repo/site/docs/demo/other`；`last_*` 由健康检查维护（`ok`/`failed` + HTTP 状态码 + 检查时间，见 contract §4.4） |
 | `project_metadata` | `UNIQUE(project_id, key_label)` | 自由 KV；固定四列（role/license/start_year/team_size）不冗余进本表 |
 | `notes` | `UNIQUE(slug)`；索引 `(project_id)`、`(publish_status)` | N:1 项目；草稿笔记前台不可见 |
 | `note_tags` | `UNIQUE(note_id, name)` | 标签字符串，无独立标签表 |

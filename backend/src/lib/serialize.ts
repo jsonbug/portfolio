@@ -77,7 +77,8 @@ export function toLink(l: {
     url: l.url,
     label: l.label,
     sort: l.sort,
-    last_status: l.last_status as Link["last_status"],
+    // 库内 null = 从未检查，wire 上一律 "unknown"（前端不用做 null 分支）
+    last_status: (l.last_status as Link["last_status"] | null) ?? "unknown",
     last_http_status: l.last_http_status,
     last_checked_at: toIso(l.last_checked_at),
     created_at: l.created_at.toISOString(),
