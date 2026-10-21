@@ -4,6 +4,7 @@ import { prisma } from "../src/lib/prisma.js";
 
 // 子表先删（外键 CASCADE 也能兜住，显式顺序更利于排查残留）
 export async function wipeDb(): Promise<void> {
+  await prisma.projectScreenshot.deleteMany();
   await prisma.projectMetadata.deleteMany();
   await prisma.noteTag.deleteMany();
   await prisma.projectLink.deleteMany();

@@ -203,7 +203,7 @@ describe("PUT /api/v1/admin/projects/:id/metadata", () => {
   it("整体替换：第二次提交覆盖第一次，顺序按 sort", async () => {
     const project = await createProject(app, token, { name: "元数据" });
     const first = await put(project.id, [{ key_label: "A", value: "1" }]);
-    expect(first.json().metadata).toEqual([{ key_label: "A", value: "1", sort: 0 }]);
+    expect(first.json().metadata).toEqual([{ key_label: "A", value: "1", kind: "meta", sort: 0 }]);
 
     const second = await put(project.id, [
       { key_label: "B", value: "2", sort: 1 },

@@ -7,11 +7,12 @@ import type {
   AdminProjectListItem,
   Link,
   NoteDetail,
+  MetadataResponse,
   NoteSummary,
   ProjectDetail,
   ProjectListItem,
 } from "../contract/schemas.js";
-import type { MetadataResponseWithKind, Screenshot } from "../contract/screenshots.js";
+import type { Screenshot } from "../contract/schemas.js";
 
 const toIso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
 
@@ -181,7 +182,7 @@ const metadataItems = (rows: Array<{ key_label: string; value: string; kind: str
   rows.map((m) => ({
     key_label: m.key_label,
     value: m.value,
-    kind: m.kind as MetadataResponseWithKind["kind"],
+    kind: m.kind as MetadataResponse["kind"],
     sort: m.sort,
   }));
 
@@ -194,16 +195,12 @@ export function toScreenshot(s: {
   return { id: s.id, url: s.url, caption: s.caption, sort: s.sort };
 }
 
-// 详情响应多带 screenshots（形状临时住 contract/screenshots.ts，待并入 schemas.ts）
-export type ProjectDetailWithScreenshots = ProjectDetail & { screenshots: Screenshot[] };
-export type AdminProjectDetailWithScreenshots = AdminProjectDetail & { screenshots: Screenshot[] };
-
 // ---------- 前台公开（不含 publish_status / deleted_at） ----------
 export function toPublicListItem(p: ProjectListRow): ProjectListItem {
   return baseListItem(p);
 }
 
-export function toPublicDetail(p: PublicProjectDetailRow): ProjectDetailWithScreenshots {
+export function toPublicDetail(p: PublicProjectDetailRow): ProjectDetail {
   return {
     ...baseListItem(p),
     description_md: p.description_md,
@@ -227,7 +224,7 @@ export function toAdminListItem(p: ProjectListRow): AdminProjectListItem {
   };
 }
 
-export function toAdminDetail(p: AdminProjectDetailRow): AdminProjectDetailWithScreenshots {
+export function toAdminDetail(p: AdminProjectDetailRow): AdminProjectDetail {
   return {
     ...baseListItem(p),
     publish_status: p.publish_status as AdminProjectDetail["publish_status"],

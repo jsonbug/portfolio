@@ -22,15 +22,12 @@ import {
 } from "../../lib/serialize.js";
 import {
   AdminProjectListQuerySchema,
+  MetadataReplaceSchema,
   ProjectCreateSchema,
   ProjectUpdateSchema,
+  ScreenshotsReplaceSchema,
   type PublishStatus,
 } from "../../contract/schemas.js";
-// 截图与 metadata.kind 的形状暂住这里（schemas.ts 本轮由前端改 excerpt，合入后整并）
-import {
-  MetadataReplaceWithKindSchema,
-  ScreenshotsReplaceSchema,
-} from "../../contract/screenshots.js";
 
 // 曝光状态机（《开发计划 v1.2》第五节）：draft→published；published→archived / draft（撤回）；archived→published
 const STATUS_TRANSITIONS: Record<PublishStatus, PublishStatus[]> = {
@@ -262,7 +259,7 @@ export async function adminProjectRoutes(app: FastifyInstance) {
   // kind 缺省 meta（旧请求体不带也能过，不做破坏性变更）；metric 走详情页指标卡，≤2 条。
   app.put("/projects/:id/metadata", async (req) => {
     const { id } = req.params as { id: string };
-    const items = validate(MetadataReplaceWithKindSchema, req.body);
+    const items = validate(MetadataReplaceSchema, req.body);
     await getProjectOr404(id);
 
     const updated = await prisma.$transaction(async (tx) => {
