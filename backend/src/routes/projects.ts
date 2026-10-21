@@ -45,15 +45,23 @@ export async function projectRoutes(app: FastifyInstance) {
     const q = validate(PublicProjectListQuerySchema, req.query);
     const where: Prisma.ProjectWhereInput = {
       ...PUBLIC_WHERE,
-      ...(q.search
-        ? { OR: [{ name: { contains: q.search } }, { summary: { contains: q.search } }] }
-        : {}),
       ...(q.technology ? { tech_stack: { some: { name: { in: q.technology } } } } : {}),
     };
 
     // 数据量小（个人作品集 ≤100 项目）：一次取回后在应用层排序/分段计数。
     // 增长到需要 DB 端排序时，改为 orderBy + 游标分页，并单独聚合 counts。
-    const rows = await prisma.project.findMany({ where, include: projectListInclude });
+    const fetched = await prisma.project.findMany({ where, include: projectListInclude });
+
+    // search 在应用层匹配，不用 SQL LIKE：`%` / `_` 是 LIKE 通配符，用户搜「100%」或「a_b」
+    // 会命中无关项目（契约 v1.2.3 要求按字面量匹配）。这里本来就要全量取回再排序/计数，成本为零。
+    const needle = q.search?.toLowerCase();
+    const rows = needle
+      ? fetched.filter(
+          (r) =>
+            r.name.toLowerCase().includes(needle) ||
+            (r.summary ?? "").toLowerCase().includes(needle),
+        )
+      : fetched;
 
     // 分段计数按「搜索 + 技术栈」过滤后、progress 过滤前的集合口径（F6 统计数字三项口径）
     const counts = {

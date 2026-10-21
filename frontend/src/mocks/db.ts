@@ -463,6 +463,7 @@ export function excerptOf(bodyMd: string | null | undefined): string | null {
     .replace(/`([^`]*)`/g, '$1') // 行内代码
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ') // 图片
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // 链接保文字
+    .replace(/<[^>]+>/g, ' ') // 内联 HTML（与后端 serialize.excerptOf 保持一致）
     .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+\.)\s+/gm, ' ') // 标题/引用/列表标记
     .replace(/[*_~]/g, '') // 强调
     .replace(/\s+/g, ' ')

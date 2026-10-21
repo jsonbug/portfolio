@@ -26,7 +26,8 @@ export type ApiErrorCode =
 
 export interface ErrorDetail {
   field: string
-  code: string
+  /** 不保证存在、不承诺稳定：后端透传 zod issue code，前端不得据此分支（契约 v1.2.3）。 */
+  code?: string
   message: string
 }
 
