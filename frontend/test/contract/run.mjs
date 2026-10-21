@@ -1,97 +1,139 @@
 /**
- * 契约联调套件：拿**真实后端**逐条校验前端依赖的契约点。
+ * 契约联调套件：**同一张用例表，两个 runner**（真实后端 / 前端 mock）。
  *
- * 为什么要有它：`frontend/src/mocks/handlers.ts` 是手写的契约副本，前后端任一侧漂移，
- * 只有打真后端才能发现。这套断言以前是临时脚本，跑完就删、下次只能人肉复现，所以固化进仓库。
+ * 为什么要有它：`frontend/src/mocks/handlers.ts` 是手写的契约副本。只说「守同构」不算数，
+ * 所以这套断言被抽成可复用的行记录（rows），`--source real` 打真后端、`--source mock`
+ * 把同一张表灌进 mock，`--source both` 逐行比对两者——同构是被**验出来**的，不是被声明的。
  *
- * 用法（后端需先在本地起着）：
+ * 用法：
  *   cd backend && npx prisma migrate deploy && npx prisma generate
- *   ADMIN_USERNAME=admin ADMIN_PASSWORD=$(...) PORT=4310 npx tsx src/index.ts
- *   cd frontend && npm run contract            # 常规跑
- *   npm run contract -- --strict               # 已知后端缺口也当失败（后端修完后用）
+ *   PORT=4310 npx tsx src/index.ts          # 4310 被占就换端口，配 CONTRACT_BASE_URL
+ *   cd frontend
+ *   npm run contract                        # 只验真后端（默认）
+ *   npm run contract -- --source mock       # 只验 mock
+ *   npm run contract -- --source both       # 双向：同一张表两遍 + 逐行 diff
+ *   npm run contract -- --strict            # 带 TODO 标注的行也算失败
  *
  * 环境变量：CONTRACT_BASE_URL（默认 http://127.0.0.1:4310/api/v1）
  *           CONTRACT_ADMIN_USERNAME / CONTRACT_ADMIN_PASSWORD（默认 admin / integration-pass）
  *
- * ⚠️ 脚本会软删目标库里所有既有项目，保证断言里的计数是确定的；只对本地 dev.db 用。
+ * ⚠️ 脚本开头会打 `BASE` + `/health`，并用哨兵项目（写入→读回→软删）断言「打的确实是这套库」；
+ *    随后软删库里所有既有项目，保证断言里的计数是确定的。只对本地 dev.db 用。
  */
-const BASE = process.env.CONTRACT_BASE_URL ?? 'http://127.0.0.1:4310/api/v1'
-const USERNAME = process.env.CONTRACT_ADMIN_USERNAME ?? 'admin'
-const PASSWORD = process.env.CONTRACT_ADMIN_PASSWORD ?? 'integration-pass'
-const STRICT = process.argv.includes('--strict')
+const CONFIG = {
+  base: process.env.CONTRACT_BASE_URL ?? 'http://127.0.0.1:4310/api/v1',
+  username: process.env.CONTRACT_ADMIN_USERNAME ?? 'admin',
+  password: process.env.CONTRACT_ADMIN_PASSWORD ?? 'integration-pass',
+}
 
 /** 每次运行一组独立 slug：项目软删后 slug 仍被占用，重复跑不能撞 409。 */
-const RUN = `c${Date.now().toString(36)}`
+let RUN = ''
+let USERNAME = CONFIG.username
+let PASSWORD = CONFIG.password
 const slugOf = (name) => `${RUN}-${name}`
-
 const DAY = 86_400_000
 let token = ''
 
+/** 传输层唯一注入点：真实后端用 fetch，mock 用 `mockFetch`。 */
+let activeTransport = null
+
 async function api(method, path, body) {
-  const res = await fetch(BASE + path, {
-    method,
-    headers: {
-      ...(body ? { 'content-type': 'application/json' } : {}),
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    redirect: 'manual',
-  })
-  const text = await res.text()
-  let json = null
-  try {
-    json = text ? JSON.parse(text) : null
-  } catch {
-    json = text
+  if (!activeTransport) throw new Error('transport 未注入：用 runPlan() 跑，别直接调 api()')
+  // 认证头由这里统一注入：两条 runner 走同一套鉴权语义，不靠各自实现碰运气
+  const headers = {
+    ...(body ? { 'content-type': 'application/json' } : {}),
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
   }
-  return { status: res.status, headers: res.headers, json }
+  return activeTransport(method, path, body, headers)
 }
 
-const failures = []
-/** 带 TODO(backend:…) 标注、后端尚未合的行（不阻断退出码，但必须一眼可见）。 */
-const pending = []
-/** 后端已修、标注该删的行。 */
-const todoDone = []
+function section(title) {
+  currentSection = title
+  console.log(`\n${title}`)
+}
 
-/** 契约必须满足；失败即退出码 1。 */
+/** 用例行：两个 runner 产出同名同序的行，`--source both` 才能逐行比对。 */
+const rows = []
+let currentSection = ''
+
+function record(row) {
+  rows.push({ section: currentSection, note: '', ...row })
+  const mark = row.satisfied ? '✓' : row.kind === 'todo' ? '✗' : '✗'
+  const suffix = row.satisfied ? (row.kind === 'todo' ? '（后端已修，删掉本行 TODO 标注即可）' : '') : ` — ${row.note}`
+  console.log(`  ${mark} ${row.name}${suffix}`)
+}
+
+/** 契约必须满足；不满足即失败。 */
 function check(name, cond, extra) {
-  console.log(`  ${cond ? '✓' : '✗'} ${name}${cond ? '' : ` — ${JSON.stringify(extra)?.slice(0, 300)}`}`)
-  if (!cond) failures.push(name)
+  record({
+    name,
+    kind: 'must',
+    satisfied: !!cond,
+    note: cond ? '' : String(JSON.stringify(extra) ?? '').slice(0, 300),
+  })
 }
 
 /**
  * 契约已定、后端还没合的行：**显式标注**，断言「当前真实行为」，不静默放行、也不从表里删。
  *
- * 约定（审查官一眼分清责任）：
- *   ✓            后端已符合契约 → 把该行改成 check() 并删掉标注
- *   ✗ + TODO(…)  红行 = 后端还没合（不阻断退出码）
- *   ✗✗           现状既不是旧行为也不符合契约 → 立刻查
+ * 行的 satisfied 记的是「契约是否已满足」：真实后端为 false（红行 + TODO），mock 侧已满足则为 true，
+ * `--source both` 会把这种差异作为「已知分叉」单独列出，而不是混进失败。
  */
 function pendingBackend(name, currentHolds, contractHolds, todo, extra) {
-  if (contractHolds) {
-    console.log(`  ✓ ${name}（后端已修，删掉本行 TODO 标注即可）`)
-    todoDone.push(name)
+  const note = String(JSON.stringify(extra) ?? '').slice(0, 200)
+  if (!contractHolds && !currentHolds) {
+    // 现状既不是旧行为也不符合契约：这不是「等后端」，是有人改坏了
+    record({ name, kind: 'must', satisfied: false, note: `现状既不是旧行为也不符合契约：${note}` })
     return
   }
-  if (currentHolds) {
-    console.log(`  ✗ ${name} — TODO(${todo}) 现状：${JSON.stringify(extra)?.slice(0, 200)}`)
-    pending.push(`${name} [${todo}]`)
-    return
+  record({
+    name,
+    kind: 'todo',
+    satisfied: !!contractHolds,
+    todo,
+    note: contractHolds ? '' : `TODO(${todo}) 现状：${note}`,
+  })
+}
+
+
+/** 执行整张用例表。`transport` 决定打真后端还是 mock；返回行记录供 diff。 */
+export async function runPlan(opts) {
+  const { transport, username = CONFIG.username, password = CONFIG.password, runId } = opts
+  activeTransport = transport
+  USERNAME = username
+  PASSWORD = password
+  RUN = runId ?? `c${Date.now().toString(36)}`
+  token = ''
+  rows.length = 0
+  currentSection = ''
+
+  const login = await api('POST', '/auth/login', { username: USERNAME, password: PASSWORD })
+  if (login.status !== 200 || typeof login.json?.token !== 'string') {
+    throw new Error(`登录失败（${login.status}）——后端是否已启动在 ${CONFIG.base}？`)
   }
-  console.log(`  ✗✗ ${name} — 现状既不是旧行为也不符合契约：${JSON.stringify(extra)?.slice(0, 200)}`)
-  failures.push(name)
-}
+  token = login.json.token
 
-function section(title) {
-  console.log(`\n${title}`)
-}
+  // 身份自证：打的是哪套库、库是不是活的、写进去能不能读回来（默认端口撞车时最容易出假绿）
+  section('环境自证 / 库身份')
+  console.log(`  目标 BASE：${CONFIG.base}`)
+  console.log(`  本次 RUN 前缀：${RUN}`)
+  const health = await api('GET', '/health')
+  check('GET /health 返回 ok', health.status === 200 && health.json?.status === 'ok', {
+    status: health.status,
+    body: health.json,
+  })
+  const sentinelSlug = slugOf('sentinel')
+  const sentinel = await api('POST', '/admin/projects', { slug: sentinelSlug, name: `哨兵 ${RUN}` })
+  check('哨兵项目写入成功（201）', sentinel.status === 201, sentinel.status)
+  const sentinelBack = await api('GET', `/admin/projects/${sentinel.json?.id}`)
+  check(
+    '哨兵读回一致（同一套库，不是别人的端口）',
+    sentinelBack.status === 200 && sentinelBack.json?.slug === sentinelSlug,
+    { status: sentinelBack.status, slug: sentinelBack.json?.slug },
+  )
+  const sentinelGone = await api('DELETE', `/admin/projects/${sentinel.json?.id}`)
+  check('哨兵软删成功', sentinelGone.status === 200 && sentinelGone.json?.deleted_at != null, sentinelGone.json?.deleted_at)
 
-const login = await api('POST', '/auth/login', { username: USERNAME, password: PASSWORD })
-if (login.status !== 200 || typeof login.json?.token !== 'string') {
-  console.error(`登录失败（${login.status}）——后端是否已启动在 ${BASE}？`)
-  process.exit(2)
-}
-token = login.json.token
 
 /** 清场：软删所有既有项目（公开面归零，计数才能断言）。 */
 async function resetProjects() {
@@ -234,9 +276,22 @@ check('分页第二页', page2.json?.items?.length === 1 && page2.json.page === 
     beyond.json?.total === all.json?.total && beyond.json?.totalPages === all.json?.totalPages,
     [beyond.json?.total, beyond.json?.totalPages],
   )
-  const badParam = await api('GET', '/projects?page=0')
-  check('参数非法返回 400', badParam.status === 400, badParam.status)
-  check('参数非法信封是 VALIDATION_ERROR', badParam.json?.error?.code === 'VALIDATION_ERROR', badParam.json?.error?.code)
+  for (const [label, path] of [
+    ['page=0', '/projects?page=0'],
+    ['page=-1', '/projects?page=-1'],
+    ['page=abc', '/projects?page=abc'],
+    ['pageSize=0', '/projects?pageSize=0'],
+    ['pageSize=101', '/projects?pageSize=101'],
+    ['pageSize=999', '/projects?pageSize=999'],
+  ]) {
+    const bad = await api('GET', path)
+    check(`参数非法 ${label} 返回 400`, bad.status === 400, bad.status)
+    check(
+      `参数非法 ${label} 信封是 VALIDATION_ERROR`,
+      bad.json?.error?.code === 'VALIDATION_ERROR',
+      bad.json?.error?.code,
+    )
+  }
 }
 // 表外抽样 0：search 超长按参数错误拒（与前端 clampSearch 上限 200 对齐）
 {
@@ -318,9 +373,14 @@ const redirect = await api('GET', `/projects/${slugOf('crawler')}`)
 check('旧 slug 返回 301', redirect.status === 301, redirect.status)
 check('301 Location 指向新 slug', (redirect.headers.get('location') ?? '').includes(`/projects/${slugOf('crawler-box')}`), redirect.headers.get('location'))
 
-for (const slug of [slugOf('blog'), slugOf('draft'), slugOf('deleted')]) {
+// 行名不能带 RUN 前缀：两个 runner 的行要能一一对上，否则 diff 会把「同一行不同 id」当成分叉
+for (const [role, slug] of [
+  ['曾发布后归档', slugOf('blog')],
+  ['草稿', slugOf('draft')],
+  ['软删除', slugOf('deleted')],
+]) {
   const res = await api('GET', `/projects/${slug}`)
-  check(`${slug} 详情 404`, res.status === 404, res.status)
+  check(`${role}项目详情 404（不泄露存在性）`, res.status === 404, res.status)
 }
 
 const techs = await api('GET', '/technologies')
@@ -341,6 +401,7 @@ const note1 = await api('POST', '/admin/notes', {
   publish_status: 'published',
   tags: ['工程'],
 })
+await new Promise((resolve) => setTimeout(resolve, 5))
 const note2 = await api('POST', '/admin/notes', {
   project_id: portfolio.id,
   slug: slugOf('note-2'),
@@ -474,16 +535,128 @@ section('笔记 >100 篇（契约 §3.3：pageSize 上限 100，前端据此提�
   check('pageSize 超过 100 被拒（400）', over.status === 400, over.status)
 }
 
-// ---------------------------------------------------------------- 收尾
-section('结果')
-console.log(`  契约必须项：${failures.length === 0 ? '全部通过' : `${failures.length} 项失败`}`)
-if (pending.length) {
-  console.log(`  带 TODO 标注、等后端合的行：${pending.length} 项（红行 = 后端还没合，不是前端没改对）`)
-  for (const item of pending) console.log(`    ✗ ${item}`)
+
+  return rows
 }
-if (todoDone.length) {
-  console.log(`  后端已修、标注可以删的行：${todoDone.length} 项`)
-  for (const item of todoDone) console.log(`    ✓ ${item}`)
+// ---------------------------------------------------------------- CLI
+const realTransport = async (method, path, body, headers) => {
+  const res = await fetch(CONFIG.base + path, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+    redirect: 'manual',
+  })
+  const text = await res.text()
+  let json = null
+  try {
+    json = text ? JSON.parse(text) : null
+  } catch {
+    json = text
+  }
+  return { status: res.status, headers: res.headers, json }
 }
-if (failures.length) failures.forEach((name) => console.log(`    ✗ ${name}`))
-process.exit(failures.length || (STRICT && pending.length) ? 1 : 0)
+
+const isMain = process.argv[1] ? process.argv[1].endsWith('run.mjs') : false
+const STRICT = process.argv.includes('--strict')
+const argv = process.argv.slice(2)
+const sourceEq = argv.find((arg) => arg.startsWith('--source='))
+const sourceIdx = argv.indexOf('--source')
+const SOURCE = sourceEq ? sourceEq.split('=')[1] : sourceIdx >= 0 ? (argv[sourceIdx + 1] ?? 'real') : 'real'
+
+function summarize(planRows) {
+  const failures = planRows.filter((row) => row.kind === 'must' && !row.satisfied)
+  const pending = planRows.filter((row) => row.kind === 'todo' && !row.satisfied)
+  const todoDone = planRows.filter((row) => row.kind === 'todo' && row.satisfied)
+  return { failures, pending, todoDone }
+}
+
+function printSummary(planRows) {
+  const { failures, pending, todoDone } = summarize(planRows)
+  section('结果')
+  const must = planRows.filter((row) => row.kind === 'must')
+  console.log(`  契约必须项：${must.length - failures.length}/${must.length} 通过`)
+  if (pending.length) {
+    console.log(`  带 TODO 标注、等后端合的行：${pending.length} 项（红行 = 后端还没合，不是前端没改对）`)
+    for (const row of pending) console.log(`    ✗ ${row.name} [${row.todo}]`)
+  }
+  if (todoDone.length) {
+    console.log(`  后端已修、标注可以删的行：${todoDone.length} 项`)
+    for (const row of todoDone) console.log(`    ✓ ${row.name}`)
+  }
+  if (failures.length) failures.forEach((row) => console.log(`    ✗ ${row.name} — ${row.note}`))
+  return { failures, pending, code: failures.length || (STRICT && pending.length) ? 1 : 0 }
+}
+
+/** 逐行比对两个 runner：同名行必须存在，且「契约是否满足」结论一致。 */
+function diffRows(realRows, mockRows) {
+  section('双向比对（real vs mock）')
+  const byName = new Map(mockRows.map((row) => [row.name, row]))
+  const diverged = []
+  const known = []
+  for (const real of realRows) {
+    const mock = byName.get(real.name)
+    if (!mock) {
+      console.log(`  ✗ 只有 real 有这一行：${real.name}`)
+      diverged.push(real.name)
+      continue
+    }
+    byName.delete(real.name)
+    if (real.satisfied !== mock.satisfied) {
+      if (real.kind === 'todo' && mock.satisfied) {
+        known.push(real.name)
+        console.log(`  ⚠ 已知分叉（后端未合）：${real.name} — real ${real.satisfied} / mock ${mock.satisfied}`)
+      } else {
+        diverged.push(real.name)
+        console.log(`  ✗ 口径不一致：${real.name} — real ${real.satisfied} / mock ${mock.satisfied}`)
+      }
+    }
+  }
+  for (const leftover of byName.keys()) {
+    console.log(`  ✗ 只有 mock 有这一行：${leftover}`)
+    diverged.push(leftover)
+  }
+  const same = realRows.length - diverged.length - known.length
+  console.log(`  一致 ${same} 行 / 已知分叉 ${known.length} 行 / 真不一致 ${diverged.length} 行`)
+  return diverged
+}
+
+async function runMockSide() {
+  const { spawnSync } = await import('node:child_process')
+  const { readFileSync, rmSync } = await import('node:fs')
+  const out = `./.contract-mock-rows-${process.pid}.json`
+  const res = spawnSync('npx', ['vitest', 'run', 'src/mocks/contract-bridge.spec.ts', '--reporter=dot'], {
+    stdio: 'inherit',
+    env: { ...process.env, CONTRACT_ROWS_OUT: out },
+  })
+  try {
+    const parsed = JSON.parse(readFileSync(out, 'utf8'))
+    rmSync(out, { force: true })
+    return parsed
+  } catch {
+    console.error(`mock 侧没有产出 rows（vitest 退出码 ${res.status}）`)
+    return null
+  } finally {
+    rmSync(out, { force: true })
+  }
+}
+
+if (!isMain) {
+  // 被 `src/mocks/contract-bridge.spec.ts` import 时只导出 runPlan，不触发 CLI
+} else if (SOURCE === 'real' || SOURCE === 'both') {
+  const realRows = await runPlan({ transport: realTransport })
+  const realSummary = printSummary(realRows)
+  if (SOURCE === 'both') {
+    const mockRows = await runMockSide()
+    if (!mockRows) process.exit(2)
+    const diverged = diffRows(realRows, mockRows)
+    process.exit(realSummary.code || diverged.length ? 1 : 0)
+  }
+  process.exit(realSummary.code)
+} else if (SOURCE === 'mock') {
+  const mockRows = await runMockSide()
+  if (!mockRows) process.exit(2)
+  process.exit(printSummary(mockRows).code)
+} else {
+  console.error(`未知 --source=${SOURCE}（可选 real / mock / both）`)
+  process.exit(2)
+}

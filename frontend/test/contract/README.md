@@ -1,8 +1,9 @@
 # 契约联调套件（contract）
 
-拿**真实后端**逐条验证前端依赖的契约点，用来给 `frontend/src/mocks/handlers.ts`（手写的契约副本）对准方向。
+**同一张用例表，两个 runner**：`--source real` 打真后端，`--source mock` 把同一张表灌进 `frontend/src/mocks/handlers.ts`，`--source both` 逐行比对两者。同构不是声明的，是每次跑出来的。
 
-- `run.mjs`：一次性跑的断言脚本，覆盖前台列表（分段计数 / 搜索 / 技术栈 / 排序 / 分页）、项目详情与 slug 301 / 可见性、笔记（N:1、`excerpt`、301、归档项目笔记不可见）。
+- `run.mjs`：用例表本体（行记录），覆盖前台列表（分段计数 / 搜索 / 技术栈 / 排序 / 分页两类语义）、项目详情与 slug 301 / 可见性、笔记（N:1、`excerpt`、301、归档项目笔记不可见）。
+- `frontend/src/mocks/contract-bridge.spec.ts`：mock runner，import 的是同一份 `run.mjs`，把行写到 `CONTRACT_ROWS_OUT` 供 `--source both` 比对。
 
 ## 前置条件
 
@@ -20,14 +21,19 @@
 2. 账号密码与上面的 `ADMIN_USERNAME` / 密码一致（默认 `admin` / `integration-pass`）。
 
 > 端口别用 3000：本机 3000 常被别的服务占着，返回的是 `{"error":"Authentication required."}`，不是本项目后端。
+> **4310 被占就换端口**，然后用 `CONTRACT_BASE_URL` 指过去；脚本开头会打印 `BASE` 并做库身份自证（见下），换端口不会悄悄打到别人库上。
 
 ## 跑
 
 ```bash
 cd frontend
-npm run contract             # 契约必须项 + 已知缺口（缺口只告警，退出码 0）
-npm run contract -- --strict # 已知缺口也当失败（后端修完后用这个当门）
+npm run contract                        # 只验真后端：必须项 + 带 TODO 标注的行（红行不阻断开退出码）
+npm run contract -- --strict            # 带 TODO 标注的行也算失败（后端修完后用这个当门）
+npm run contract -- --source mock       # 只验 mock（不需要后端）
+npm run contract -- --source both       # 双向：同一张表两遍 + 逐行 diff（真不一致 → 退出码 1）
 ```
+
+`--source both` 的判定：同名行逐条比「契约是否满足」。差异若发生在带 `TODO` 标注的行上（真实后端未合、mock 已按契约实现），列为 `⚠ 已知分叉` 不计失败；其余任何差异都算 `真不一致` 并退出 1。
 
 可覆盖的环境变量：
 
@@ -39,8 +45,10 @@ npm run contract -- --strict # 已知缺口也当失败（后端修完后用这�
 
 ## 注意
 
-- 脚本开头会**软删目标库里的所有既有项目**（保证计数断言确定），只对本地 `dev.db` 这种测试库用。
+- **库身份自证**：脚本先打印 `BASE` 与 `/health` 结果，再建一个哨兵项目（写入 → 按 id 读回 → 软删），三者都通过才继续。这一步是为了防「默认端口撞上另一个工作区的后端，全套断言却全绿」——那种绿是假的。
+- 校验过库身份后，脚本会**软删目标库里的所有既有项目**（保证计数断言确定），只对本地 `dev.db` 这种测试库用。
 - **带 TODO 标注的红行 = 后端还没合，不是前端没改对**。`pendingBackend(name, 当前行为, 契约行为, 'backend:…')` 会断言「当前真实行为」并打 `✗ … TODO(backend:xxx)`，既不静默放行，也不把行从表里删掉；后端合入后该行自动变 `✓ …（后端已修，删掉本行 TODO 标注即可）`，前端同批把标注改成 `check()`。
 - 当前带标注的：`search` 的 `%`/`_` 未转义（`fix/v1.2-review`）、`NoteSummary.excerpt` 未上线（契约 v1.2.3）。
 - 表外抽样（不在 15 行对照表内，防「只对快照不对行为」）：`search` 超 200 字 → 400、`search=%` / `search=_` 字面量匹配、`stars` 同分回 `recent`、笔记 >100 篇（pageSize 上限 100 + 真实 `total`）。
-- mock 侧同口径由 `frontend/src/mocks/handlers.spec.ts` 守住；这套脚本守的是「mock 与真实后端同构」。
+- 公开项目详情**没有** `publish_status`，这是契约决定（可见性过滤后只剩 `published`，放开等于让前台表达它不该知道的状态）；所以详情页元数据里「发布状态」固定渲染「已发布」，归档项目的真实状态只属于后台。
+- mock 侧同口径另有 `frontend/src/mocks/handlers.spec.ts` 单测；「两边同构」由 `--source both` 每次现场比对，不靠这句话担保。

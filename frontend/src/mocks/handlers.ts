@@ -426,7 +426,7 @@ function handleAdmin(req: MockRequest): Response {
       const input = body as ProjectCreate
       const conflict = state.projects.some((p) => p.slug === input.slug)
       if (conflict) return errorResponse(409, 'CONFLICT', `slug 已被占用：${input.slug}`)
-      return created(toAdminProjectDetail(state, createProject(state, input)))
+      return created(toAdminProjectDetail(state, createProject(state, input, Date.now())))
     }
     return errorResponse(405, 'METHOD_NOT_ALLOWED', '方法不允许')
   }
@@ -484,7 +484,7 @@ function handleAdmin(req: MockRequest): Response {
           `不允许从 ${project.publish_status} 迁移到 ${patch.publish_status}`,
         )
       }
-      return ok(toAdminProjectDetail(state, updateProject(state, project, patch)))
+      return ok(toAdminProjectDetail(state, updateProject(state, project, patch, Date.now())))
     }
 
     if (method === 'DELETE') {
@@ -544,7 +544,7 @@ function handleAdmin(req: MockRequest): Response {
       if (state.notes.some((n) => n.slug === input.slug)) {
         return errorResponse(409, 'CONFLICT', `slug 已被占用：${input.slug}`)
       }
-      return created(toAdminNoteDetail(state, createNote(state, input)))
+      return created(toAdminNoteDetail(state, createNote(state, input, Date.now())))
     }
     return errorResponse(405, 'METHOD_NOT_ALLOWED', '方法不允许')
   }
@@ -565,7 +565,7 @@ function handleAdmin(req: MockRequest): Response {
           return errorResponse(409, 'CONFLICT', `slug 已被占用：${patch.slug}`)
         }
       }
-      return ok(toAdminNoteDetail(state, updateNote(state, note, patch)))
+      return ok(toAdminNoteDetail(state, updateNote(state, note, patch, Date.now())))
     }
 
     if (method === 'DELETE') {
