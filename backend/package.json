@@ -1,0 +1,43 @@
+{
+  "name": "portfolio-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "项目展示平台后端（Node.js + Fastify + Prisma + SQLite，预留迁 PostgreSQL/Supabase）",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.0",
+    "fastify": "^5.12.7",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "prisma": "6.19.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^5.0.5"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.0": true,
+    "prisma@6.19.0": true,
+    "@prisma/engines@6.19.0": true,
+    "esbuild@0.28.2": true
+  }
+}

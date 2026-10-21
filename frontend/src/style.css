@@ -1,0 +1,183 @@
+/* ============================================================
+   设计令牌 —— 对齐 ALICE-4 方向 A「纸感编辑台」
+   暖中性底 + 靛蓝主色 + 12px 卡片圆角，对比度均 ≥ 5.2:1
+   ============================================================ */
+:root {
+  /* 主色（靛蓝） */
+  --c-primary: #2b4acb;
+  --c-primary-strong: #1e36a0;
+  --c-primary-soft: #edf0fe;
+  /* 辅色（赤陶） */
+  --c-accent: #b84a22;
+
+  /* 中性色 */
+  --c-ink: #14110d;
+  --c-text: #3d3833;
+  --c-text-secondary: #6e6862;
+  --c-text-placeholder: #9a948c; /* 仅占位/装饰，不承载关键信息 */
+  --c-bg: #fbfaf8;
+  --c-surface: #ffffff;
+  --c-border: #e6e2db;
+  --c-fill: #f4f2ee;
+
+  /* 语义色 */
+  --c-success: #1e7a4d;
+  --c-warning: #8a5b00;
+  --c-danger: #b4342b;
+
+  /* 圆角 */
+  --r-tag: 4px;
+  --r-control: 8px;
+  --r-card: 12px;
+  --r-overlay: 16px;
+  --r-pill: 999px;
+
+  /* 阴影 */
+  --shadow-e1: 0 1px 2px rgba(20, 17, 13, 0.06);
+
+  /* 间距（8pt 栅格） */
+  --sp-1: 8px;
+  --sp-2: 16px;
+  --sp-3: 24px;
+  --sp-4: 34px;
+  --sp-5: 52px;
+
+  /* 字体 */
+  --font-sans:
+    'HarmonyOS Sans SC', system-ui, -apple-system, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+
+  color-scheme: light;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--c-text);
+  background-color: var(--c-bg);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* 数字/代码等宽 + 表格数字对齐 */
+.tabular-nums,
+code {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* 统一焦点环（无障碍） */
+:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--c-primary);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--c-primary-strong);
+  text-decoration: underline;
+}
+
+/* ---------- 共享表单/按钮基础 ---------- */
+.input,
+.select,
+.textarea {
+  width: 100%;
+  padding: 8px 12px;
+  font: inherit;
+  color: var(--c-text);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-control);
+}
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--c-text-placeholder);
+}
+.input:focus,
+.select:focus,
+.textarea:focus {
+  border-color: var(--c-primary);
+  outline: 2px solid var(--c-primary);
+  outline-offset: 0;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px; /* 热区 ≥ 44px */
+  padding: 8px 16px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--c-text);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-control);
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+.btn:hover {
+  background: var(--c-fill);
+}
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.btn-primary {
+  color: #ffffff;
+  background: var(--c-primary);
+  border-color: var(--c-primary);
+}
+.btn-primary:hover {
+  background: var(--c-primary-strong);
+  border-color: var(--c-primary-strong);
+}
+.btn-danger {
+  color: #ffffff;
+  background: var(--c-danger);
+  border-color: var(--c-danger);
+}
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+}
+.btn-ghost:hover {
+  background: var(--c-fill);
+}
+
+.card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-e1);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text-secondary);
+}
+
+.page {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: var(--sp-4) var(--sp-3);
+}

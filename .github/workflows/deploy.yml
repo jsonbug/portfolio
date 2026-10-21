@@ -1,0 +1,37 @@
+name: Deploy
+
+# 部署骨架：当前仅构建前端并产出产物，便于人工取用/托管校验。
+# 实际部署目标（Vercel / Netlify / 自有服务器）在阶段 4 联调与上线前确定后，
+# 在本文件中追加对应 provider 的发布步骤。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-frontend:
+    name: Build frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
