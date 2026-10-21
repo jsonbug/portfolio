@@ -52,14 +52,6 @@ npm run contract -- --source both       # 双向：同一张表两遍 + 逐行 d
   **四步里任何一步不成立，立即 `process.exit(3)`，不会进入下面的清场步骤**——清场会对库里所有项目发 `DELETE`，
   撞上别人的库就是把别人的数据软删掉，而红行还藏在输出最后一行。退出码约定：`1` 断言失败、`2` mock 侧取数失败、`3` 库身份未验明即中止。
 - 校验过库身份后，脚本会**软删目标库里的所有既有项目**（保证计数断言确定），只对本地 `dev.db` 这种测试库用。
-- **带 TODO 标注的红行 = 后端还没合，不是前端没改对**。`pendingBackend(name, 当前行为, 契约行为, 'TODO(<branch>)')` 会断言「当前真实行为」并打 `✗ … TODO(<branch>)`，既不静默放行，也不把行从表里删掉；后端合入后该行自动变 `✓ …（后端已修，删掉本行 TODO 标注即可）`，前端同批把标注改成 `check()`。
-- **TODO 的 branch 必须是可校验的 git 分支名**（`backend:excerpt` 这类标签不接受）。校验命令（不进脚本——无网/无 git 的环境不该被卡死，由放行时人工跑一次）：
-
-  ```bash
-  grep -o 'TODO([^)]*)' frontend/test/contract/run.mjs | sed 's/TODO(//;s/)//' | sort -u \
-    | xargs -r -n1 git ls-remote --exit-code --heads origin
-  ```
-
 - **没有「已知分叉」机制**：`pendingBackend()`、`kind==='todo'` 分支与 `MAX_KNOWN_DIVERGENCES` 都已删除，
   取而代之的是结构断言「整张表只能是 `must`」。理由是 abuse 通道不能靠常量守——常量可以改大，留一个函数就能标一打 TODO。
 - 清场**只删本次 RUN 前缀的项目**（`cleanupRunProjects()`），不再发全局 reset：身份自证只能证明「库能读能写」，
