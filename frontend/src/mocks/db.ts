@@ -553,6 +553,8 @@ export function toAdminProjectListItem(state: DbState, p: DbProject): AdminProje
     publish_status: p.publish_status,
     published_at: p.published_at,
     deleted_at: p.deleted_at,
+    // 口径与真后端一致：该项目全部笔记（草稿 + 已发布），与过滤条件无关。
+    note_count: state.notes.filter((note) => note.project_id === p.id).length,
   }
 }
 

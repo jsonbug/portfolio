@@ -589,4 +589,23 @@ describe('错误信封与路由', () => {
     expect(res.status).toBe(200)
     expect((await bodyOf<ProjectListEnvelope>(res)).items).toHaveLength(1)
   })
+
+  it('后台列表项带整数 note_count（契约 4.1，口径含草稿、与过滤无关）', async () => {
+    const res = await call('GET', '/admin/projects')
+    expect(res.status).toBe(200)
+    const data = await bodyOf<{ items: AdminProjectListItem[] }>(res)
+    expect(data.items.length).toBeGreaterThan(0)
+    for (const item of data.items) {
+      expect(Number.isInteger(item.note_count)).toBe(true)
+      expect(item.note_count).toBeGreaterThanOrEqual(0)
+    }
+    // 项目展示平台 3 篇（2 已发布 + 1 草稿）；旧博客 1 篇（项目已归档，计数不因此变 0）
+    expect(data.items.find((item) => item.slug === 'portfolio-platform')?.note_count).toBe(3)
+    expect(data.items.find((item) => item.slug === 'old-blog')?.note_count).toBe(1)
+
+    // 过滤不该改变计数口径
+    const filtered = await call('GET', '/admin/projects', { query: { publish_status: 'archived' } })
+    const filteredData = await bodyOf<{ items: AdminProjectListItem[] }>(filtered)
+    expect(filteredData.items.find((item) => item.slug === 'old-blog')?.note_count).toBe(1)
+  })
 })

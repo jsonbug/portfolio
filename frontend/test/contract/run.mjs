@@ -78,6 +78,21 @@ function check(name, cond, extra) {
   })
 }
 
+/**
+ * 清场：**只软删本次 RUN 前缀的项目**，绝不发全局清理。
+ *
+ * 必须定义在模块顶层：CLI 的 `finally` 在 `runPlan` 之外调用它。
+ * （曾经嵌在 `runPlan` 里，开头调用正常、收尾却 `ReferenceError`，只在 `--source both` 收尾才暴露。）
+ */
+async function cleanupRunProjects() {
+  const existing = await api('GET', '/admin/projects?pageSize=100&includeDeleted=true')
+  const mine = (existing.json?.items ?? []).filter((item) => item.slug.startsWith(`${RUN}-`))
+  for (const item of mine) {
+    if (!item.deleted_at) await api('DELETE', `/admin/projects/${item.id}`)
+  }
+  return mine.length
+}
+
 /** 结构性断言：整张表只能有 `kind === 'must'`。 */
 function assertNoTodoRows(list) {
   const unexpected = list.filter((row) => row.kind !== 'must')
@@ -145,21 +160,8 @@ export async function runPlan(opts) {
   bailIfFailed(cleaned, '哨兵软删')
 
 
-/**
- * 清场：**只软删本次 RUN 前缀的项目**，绝不发全局清理。
- *
- * 全局 reset（删掉库里所有项目）在端口撞车时会把别人的库清空，这是 P0：假绿是骗人，这个是删数据。
- * 本脚本的自证只证明「这套库能读能写」，不证明「这套库专属于我」，所以清理必须按自己的命名前缀收窄。
- * 代价是库里可能有别的 RUN 残留：计数断言因此全部改成「基线 + 本次增量」，见 `attachBaseline()`。
- */
-async function cleanupRunProjects() {
-  const existing = await api('GET', '/admin/projects?pageSize=100&includeDeleted=true')
-  const mine = (existing.json?.items ?? []).filter((item) => item.slug.startsWith(`${RUN}-`))
-  for (const item of mine) {
-    if (!item.deleted_at) await api('DELETE', `/admin/projects/${item.id}`)
-  }
-  return mine.length
-}
+// 清场逻辑见模块顶部的 `cleanupRunProjects`（CLI 收尾也要用，必须放顶层）。
+// 代价是库里可能有别的 RUN 残留：计数断言因此全部改成「基线 + 本次增量」，见 `attachBaseline()`。
 
 /** 清场后的公开面基线（别的 RUN 残留会一直存在，计数断言一律相对它）。 */
 let baseline = { total: 0, counts: { all: 0, ongoing: 0, launched: 0 } }
@@ -494,6 +496,48 @@ const techs = await api('GET', '/technologies')
   )
 }
 
+// ---------------------------------------------------------------- 后台项目列表：键集合
+section('后台项目列表 / 键集合 / note_count')
+
+const adminList = await api('GET', '/admin/projects?pageSize=5&includeDeleted=true')
+const adminItem = adminList.json?.items?.[0] ?? {}
+const adminKeys = Object.keys(adminItem).sort()
+/**
+ * 契约 §4.1：AdminProjectListItem = ProjectListItem + publish_status / published_at / deleted_at / note_count。
+ * 这一行是「字段在契约与真后端有、mock 没有也不会红」的补丁——note_count 差一点就这么漏过去。
+ * 两侧（real / mock）都要给出同一组键，差一个键就红。
+ */
+const CONTRACT_ADMIN_ITEM_KEYS = [
+  'cover_image_url',
+  'created_at',
+  'deleted_at',
+  'id',
+  'last_updated_at',
+  'links',
+  'name',
+  'note_count',
+  'progress',
+  'publish_status',
+  'published_at',
+  'slug',
+  'stars',
+  'summary',
+  'tech_stack',
+  'updated_at',
+  'version',
+]
+check(
+  '后台列表项键集合 = 契约 4.1（含 note_count，无 cover_source_url）',
+  adminKeys.join(',') === CONTRACT_ADMIN_ITEM_KEYS.join(','),
+  adminKeys,
+)
+check(
+  'note_count 是非负整数',
+  Number.isInteger(adminItem.note_count) && adminItem.note_count >= 0,
+  adminItem.note_count,
+)
+check('cover_source_url 只在详情', !('cover_source_url' in adminItem), Object.keys(adminItem))
+
 // ---------------------------------------------------------------- 笔记
 section('笔记（N:1）/ 摘要字段 / 可见性 / 301')
 
@@ -723,21 +767,37 @@ async function runMockSide() {
 
 if (!isMain) {
   // 被 `src/mocks/contract-bridge.spec.ts` import 时只导出 runPlan，不触发 CLI
-} else if (SOURCE === 'real' || SOURCE === 'both') {
-  const realRows = await runPlan({ transport: realTransport })
-  const realSummary = printSummary(realRows)
-  if (SOURCE === 'both') {
-    const mockRows = await runMockSide()
-    if (!mockRows) process.exit(2)
-    const diverged = diffRows(realRows, mockRows)
-    process.exit(realSummary.code || diverged.length ? 1 : 0)
-  }
-  process.exit(realSummary.code)
 } else if (SOURCE === 'mock') {
   const mockRows = await runMockSide()
   if (!mockRows) process.exit(2)
   process.exit(printSummary(mockRows).code)
 } else {
-  console.error(`未知 --source=${SOURCE}（可选 real / mock / both）`)
-  process.exit(2)
+  // 收尾清场与开头同源：/ 自己建的 RUN- 项目自己收，异常路径也走 finally。
+  let exitCode = 0
+  try {
+    const realRows = await runPlan({ transport: realTransport })
+    const realSummary = printSummary(realRows)
+    if (SOURCE === 'both') {
+      const mockRows = await runMockSide()
+      if (!mockRows) {
+        exitCode = 2
+      } else {
+        const diverged = diffRows(realRows, mockRows)
+        exitCode = realSummary.code || diverged.length ? 1 : 0
+      }
+    } else if (SOURCE === 'real') {
+      exitCode = realSummary.code
+    } else {
+      console.error(`未知 --source=${SOURCE}（可选 real / mock / both）`)
+      exitCode = 2
+    }
+  } finally {
+    try {
+      await cleanupRunProjects()
+    } catch (err) {
+      console.error(`  ⚠ 收尾清场失败：${err instanceof Error ? err.message : String(err)}`)
+      if (exitCode === 0) exitCode = 1
+    }
+  }
+  process.exit(exitCode)
 }
