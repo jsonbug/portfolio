@@ -199,24 +199,29 @@ server {
 
 | 步骤 | 依赖 | 拿不到时的后果 |
 | --- | --- | --- |
-| `apk add --no-cache openssl` | Alpine CDN | Dockerfile 里**已容错**：拉不到只打一行 WARN 继续。`node:22-alpine` 自带 `libssl.so.3` / `libcrypto.so.3`，prisma 引擎可正常用 |
+| `prisma generate` / prisma 引擎运行 | 基础镜像自带的 `libssl.so.3`（不是 `openssl` 包） | Dockerfile 里是**构建期断言**：`test -e /usr/lib/libssl.so.3`，缺了**直接构建失败**（不放行，否则容器里 prisma 会崩）。`openssl` **CLI** 不是运行时依赖——应用与 prisma 引擎都不调它，只有本文档里「`openssl rand` 生成密钥」这条人工命令用到，在宿主上执行即可，镜像里不装 |
 | `npx prisma generate`（builder 阶段） | `binaries.prisma.sh` | 引擎下载不到则**构建失败**（这一步没法容错，引擎是运行时必需） |
 
 `npm ci` 需要能访问 npm registry。离线/内网构建的做法：在有网机器上 `docker save` 两个镜像（`portfolio-api:local` / `portfolio-web:local`）带进内网 `docker load`，再用 `docker compose up -d --no-build` 起（`image:` 名字已固定，不需要重新构建）。
 
 ### 11.2 一键冒烟脚本
 
-`scripts/smoke-compose.mjs`：对已起来的一套环境跑完整业务链路，约 70 条断言，失败项逐条打印并返回非 0。
+`scripts/smoke-compose.mjs`：对已起来的一套环境跑完整业务链路，约 100 条断言，失败项逐条打印并返回非 0。
 
 ```bash
+LINK_CHECK_ENABLED=0 docker compose up -d       # 冒烟前先这样起：别让脚本在你的机器上触发外网检查
 ADMIN_PASSWORD='你的强口令' node scripts/smoke-compose.mjs              # 默认 http://localhost:8080
 ADMIN_PASSWORD='你的强口令' node scripts/smoke-compose.mjs --base http://localhost:8180 --slug my-run
 ADMIN_PASSWORD='你的强口令' node scripts/smoke-compose.mjs --public      # 额外做一次真实外网链接重检
 ```
 
-覆盖：nginx 静态托管与 `/projects`、`/admin/*` 的 history fallback → `/api/v1` 同源反代（含 `Authorization` 透传）→ 登录 / 401 → 建草稿项目（含链接与笔记）→ 草稿对前台不可见 → 发布后列表/详情/笔记可见 → 后台分段计数与过滤 → 元数据 KV（整体替换 + 重复键名 400）→ B16 链接重检（私网目标必须判 `failed` 且 `last_http_status` 为 null）→ 软删/恢复/`includeDeleted` → 契约错误信封与状态机。
+覆盖：nginx 静态托管与 `/projects`、`/admin/*` 的 history fallback → `/api/v1` 同源反代（含 `Authorization` 透传）→ 登录 / 401 → 建草稿项目（含链接与笔记）→ 草稿对前台**不可见**（先造一个已发布项目保证列表非空，再断否定命题）→ 发布后列表/详情/笔记可见（含 `excerpt` 正向前断）→ 技术栈过滤、进展分段过滤、`sort=recent` 降序（断内容而非只断 200）→ 后台分段计数与过滤、后台笔记状态 → 元数据 KV 与截图（断内容）→ 软删/恢复/`includeDeleted` → 契约错误信封（`VALIDATION_ERROR` / `INVALID_STATUS_TRANSITION`）与状态机。
 
-它只读 `--base` 指向的入口、只用标准库 fetch，不接外网（除 `--public`）。CI 的 `compose` job 会跑同一份脚本。
+关于外网：脚本**自己**不发任何外网请求，但后端「建链接时自动检查」默认开启（`backend/src/lib/link-check.ts:251`，`NODE_ENV=test` 或 `LINK_CHECK_ENABLED=0` 关闭），所以**起栈时要显式 `LINK_CHECK_ENABLED=0`**——否则建链接那一刻后端会真的去连一次外网，在受限网络里把该链接记成 `failed`（不影响判定，但库里留脏状态）。`--public` 是唯一显式要求出网的分支。
+
+关于数据：脚本默认在结尾软删自己建的项目（避免在被复用的库上累积脏数据）；调试时加 `--keep-data` 保留。**它是写操作**，只应在一次性/可回收的库上跑（`docker compose down -v` 后重建即干净）。
+
+关于输出：`PASS`/`FAIL`/`SKIP` 三类分开计。`SKIP` 是「这条没执行」，**不计入通过也不计入失败**——把跳过印成 PASS 会让绿色失去意义。CI 的 `compose` job 跑同一份脚本（不带 `--public`）。
 
 > 先确认你访问的确实是这套容器：`docker compose port web 80` 与 `ss -ltn | grep <端口>` 对一下。
 > 宿主机上别的服务若占了同一个端口（本机就是 Trilium 占着 `127.0.0.1:8080`），`curl localhost:8080` 会打到它，
@@ -236,3 +241,5 @@ Error: [env] 生产配置校验失败，拒绝启动：
 ```
 
 这样 §9 里那个「登录永远 401」的坑会在启动时就暴露，而不是让管理员反复试密码。
+
+分环境行为（避免把本地开发和 CI 一起打死）：`NODE_ENV=production` **硬拒启动**；非生产环境只 **WARN**（逐项列原因）并在登录 401 的 message 里附一句「服务端配置校验未通过」；显式给 `ALLOW_WEAK_SECRET=1` 才在非生产放行，且**仍然打 WARN**（逃逸必须留痕，否则等于没有）。
