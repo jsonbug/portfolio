@@ -4,7 +4,13 @@ import { useRouter } from 'vue-router'
 import { getPublicProject } from '@/api/projects'
 import ProjectCover from '@/components/ProjectCover.vue'
 import ProgressBadge from '@/components/ProgressBadge.vue'
-import { LINK_TYPE_LABELS, PROGRESS_LABELS, type Link, type ProjectDetail } from '@/types'
+import {
+  LINK_TYPE_LABELS,
+  PROGRESS_LABELS,
+  type Link,
+  type ProjectDetail,
+  type Screenshot,
+} from '@/types'
 import { bareDomain, safeHttpUrl } from '@/utils/link'
 import { renderMarkdown } from '@/utils/markdown'
 import { formatDate } from '@/utils/text'
@@ -85,7 +91,45 @@ const fixedMeta = computed(() => {
   ].filter((row) => row.value !== '')
 })
 
-const hasMetaPanel = computed(() => fixedMeta.value.length > 0 || (detail.value?.metadata.length ?? 0) > 0)
+/**
+ * 右栏元数据 panel 只放 `kind === 'meta'` 的条目；
+ * `kind === 'metric'` 的条目属于左栏「指标」统计格（契约 4.1.1），两边不能重复渲染。
+ */
+const metaRows = computed(() => (detail.value?.metadata ?? []).filter((row) => row.kind !== 'metric'))
+
+/** 指标统计格：最多 4 格，0 条时整块不渲染（稿上 4 格是上限，不是要求凑满）。 */
+const metricCells = computed(() =>
+  (detail.value?.metadata ?? []).filter((row) => row.kind === 'metric').slice(0, 4),
+)
+
+/**
+ * 截图轮播（稿：一次一张 + 左右箭头 + `截图 n/N` + 图注）。
+ *
+ * 过不了 `safeHttpUrl` 的地址整项不渲染（沿用详情页链接的处理口径）：
+ * 渲染出来只会是一张裂图，比少一张更糟。
+ */
+const shots = computed<Array<Screenshot & { safeUrl: string }>>(() =>
+  (detail.value?.screenshots ?? []).flatMap((shot) => {
+    const safeUrl = safeHttpUrl(shot.url)
+    return safeUrl ? [{ ...shot, safeUrl }] : []
+  }),
+)
+
+const shotIndex = ref(0)
+const currentShot = computed(() => shots.value[shotIndex.value] ?? null)
+
+function stepShot(delta: number): void {
+  const total = shots.value.length
+  if (total <= 1) return
+  shotIndex.value = (shotIndex.value + delta + total) % total
+}
+
+/** 有图注用图注，没有则「{项目名} 截图 n」——alt 不能为空，也不能只是文件名。 */
+function shotAlt(shot: Screenshot, index: number): string {
+  return shot.caption?.trim() || `${detail.value?.name ?? '项目'} 截图 ${index + 1}`
+}
+
+const hasMetaPanel = computed(() => fixedMeta.value.length > 0 || metaRows.value.length > 0)
 /** 三个 panel 全空时整段侧栏不渲染（不留空壳占位）。 */
 const hasSidePanels = computed(
   () => hasMetaPanel.value || (detail.value?.links.length ?? 0) > 0 || (detail.value?.tech_stack.length ?? 0) > 0,
@@ -159,9 +203,62 @@ onMounted(() => void load())
 
       <div class="body-grid">
         <div class="column-main">
-          <section v-if="descriptionHtml" class="card section" aria-labelledby="desc-title">
+          <section
+            v-if="descriptionHtml || currentShot || metricCells.length"
+            class="card section"
+            aria-labelledby="desc-title"
+          >
             <h2 id="desc-title">项目介绍</h2>
-            <div class="markdown" v-html="descriptionHtml" />
+            <div v-if="descriptionHtml" class="markdown" v-html="descriptionHtml" />
+
+            <figure
+              v-if="currentShot"
+              class="shot"
+              role="group"
+              aria-roledescription="轮播"
+              aria-label="项目截图"
+            >
+              <img
+                :src="currentShot.safeUrl"
+                :alt="shotAlt(currentShot, shotIndex)"
+                class="shot-image"
+                :loading="shotIndex === 0 ? 'eager' : 'lazy'"
+                decoding="async"
+              />
+              <figcaption class="shot-bar">
+                <span class="shot-caption type-small">{{ currentShot.caption ?? '' }}</span>
+                <span class="shot-nav">
+                  <button
+                    v-if="shots.length > 1"
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    aria-label="上一张截图"
+                    @click="stepShot(-1)"
+                  >
+                    ‹
+                  </button>
+                  <span class="shot-count type-small tabular-nums" aria-live="polite">
+                    截图 {{ shotIndex + 1 }} / {{ shots.length }}
+                  </span>
+                  <button
+                    v-if="shots.length > 1"
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    aria-label="下一张截图"
+                    @click="stepShot(1)"
+                  >
+                    ›
+                  </button>
+                </span>
+              </figcaption>
+            </figure>
+
+            <ul v-if="metricCells.length" class="metric-grid">
+              <li v-for="cell in metricCells" :key="cell.key_label" class="metric-cell">
+                <strong class="metric-value tabular-nums">{{ cell.value }}</strong>
+                <span class="metric-label type-small">{{ cell.key_label }}</span>
+              </li>
+            </ul>
           </section>
 
           <section v-if="detail.notes.length" id="related-notes" class="card section" aria-labelledby="notes-title">
@@ -192,7 +289,7 @@ onMounted(() => void load())
                 <dt>{{ row.label }}</dt>
                 <dd>{{ row.value }}</dd>
               </div>
-              <div v-for="row in detail.metadata" :key="`kv-${row.key_label}`" class="kv-row">
+              <div v-for="row in metaRows" :key="`kv-${row.key_label}`" class="kv-row">
                 <dt>{{ row.key_label }}</dt>
                 <dd>{{ row.value }}</dd>
               </div>
@@ -391,6 +488,98 @@ onMounted(() => void load())
 .link-failed {
   color: var(--c-danger);
 }
+.shot {
+  margin: var(--space-24) 0 0;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background: var(--c-fill);
+}
+
+.shot-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: var(--c-fill);
+}
+
+.shot-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-12);
+  background: var(--c-surface);
+  border-top: 1px solid var(--c-border);
+}
+
+.shot-caption {
+  color: var(--c-text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shot-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--c-text-secondary);
+  flex: none;
+}
+
+/* 4 格指标：稿上是等分格 + 左侧发丝线，窄屏折成 2 列 */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin: var(--space-24) 0 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+
+.metric-cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-16);
+  border-left: 1px solid var(--c-border);
+}
+
+.metric-cell:first-child {
+  border-left: none;
+}
+
+.metric-value {
+  font-size: var(--fs-h2);
+  line-height: var(--lh-h2);
+  font-weight: var(--fw-semibold);
+  color: var(--c-ink);
+}
+
+.metric-label {
+  color: var(--c-text-secondary);
+}
+
+@media (max-width: 767px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric-cell:nth-child(odd) {
+    border-left: none;
+  }
+
+  .metric-cell:nth-child(n + 3) {
+    border-top: 1px solid var(--c-border);
+  }
+}
+
 .kv {
   margin: 0;
   display: flex;

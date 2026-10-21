@@ -2,17 +2,42 @@ import type { Progress, PublishStatus } from './enums'
 import type { Link } from './link'
 import type { NoteSummary, AdminNoteSummary } from './note'
 
+/**
+ * 元数据条目类型（契约 4.1.1）：
+ * - `meta`：右栏元数据 panel 的普通 KV 行；
+ * - `metric`：详情页「指标」统计格的格子（≤2 条、键值更短）。
+ */
+export type MetadataKind = 'meta' | 'metric'
+
 /** 自定义元数据（KV）：按 `sort` 升序渲染，键名在同一项目内唯一。 */
 export interface MetadataItem {
   key_label: string
   value: string
+  kind: MetadataKind
   sort: number
 }
 
-/** 写入用元数据项（`sort` 可省略，由后端按数组顺序补齐）。 */
+/** 写入用元数据项（`sort` / `kind` 可省略，`kind` 缺省 `meta`，`sort` 按数组顺序补齐）。 */
 export interface MetadataItemInput {
   key_label: string
   value: string
+  kind?: MetadataKind
+  sort?: number
+}
+
+/** 项目截图（契约 4.1.1）：只存原图 URL，顺序由 `sort` 决定。 */
+export interface Screenshot {
+  id: string
+  url: string
+  /** `null` 表示无图注（后端把空白字符串归一为 null）。 */
+  caption: string | null
+  sort: number
+}
+
+/** 写入用截图（整体替换，`sort` 缺省按数组下标）。 */
+export interface ScreenshotInput {
+  url: string
+  caption?: string | null
   sort?: number
 }
 
@@ -41,6 +66,8 @@ export interface ProjectDetail extends ProjectListItem {
   start_year: number | null
   team_size: number | null
   metadata: MetadataItem[]
+  /** 无截图为 `[]`（不是 `null`）。 */
+  screenshots: Screenshot[]
   notes: NoteSummary[]
 }
 

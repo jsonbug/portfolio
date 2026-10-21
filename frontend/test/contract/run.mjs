@@ -538,6 +538,81 @@ check(
 )
 check('cover_source_url 只在详情', !('cover_source_url' in adminItem), Object.keys(adminItem))
 
+// ---------------------------------------------------------------- 截图 / 元数据 kind
+section('项目截图 / 元数据 kind（契约 §4.1.1）')
+
+const shotBase = 'https://cdn.example.com/contract'
+const shotsPut = await api('PUT', `/admin/projects/${portfolio.id}/screenshots`, [
+  { url: `${shotBase}-1.png`, caption: '  首图  ' },
+  { url: `${shotBase}-2.png`, caption: '   ' },
+])
+check('PUT /screenshots 返回 200 且回后台详情', shotsPut.status === 200, shotsPut.status)
+const shotRows = shotsPut.json?.screenshots ?? []
+/**
+ * 契约 §4.1.1：截图是裸数组整体替换；`sort` 缺省用数组下标；
+ * `caption` 空白归一为 `null`（wire 上不出现空串，客户端不必处理 ""）。
+ */
+check('截图条目键集合 = id / url / caption / sort', 
+  Object.keys(shotRows[0] ?? {}).sort().join(',') === 'caption,id,sort,url',
+  Object.keys(shotRows[0] ?? {}),
+)
+check('截图 sort 按下标补齐（0,1）', shotRows.map((s) => s.sort).join(',') === '0,1', shotRows.map((s) => s.sort))
+check('截图 caption 裁剪，空白归一为 null', shotRows[0]?.caption === '首图' && shotRows[1]?.caption === null,
+  shotRows.map((s) => s.caption))
+
+const shotsEmpty = await api('PUT', `/admin/projects/${portfolio.id}/screenshots`, [])
+check('PUT /screenshots [] 清空且返回 []', 
+  shotsEmpty.status === 200 && Array.isArray(shotsEmpty.json?.screenshots) && shotsEmpty.json.screenshots.length === 0,
+  shotsEmpty.json?.screenshots,
+)
+check('无截图的项目 `screenshots` 是 [] 不是 null',
+  Array.isArray(shotsEmpty.json?.screenshots),
+  typeof shotsEmpty.json?.screenshots,
+)
+
+const shotsTooMany = await api('PUT', `/admin/projects/${portfolio.id}/screenshots`,
+  Array.from({ length: 11 }, (_, i) => ({ url: `${shotBase}-${i}.png` })))
+check('截图 11 张 → 400 VALIDATION_ERROR（整批拒绝）',
+  shotsTooMany.status === 400 && shotsTooMany.json?.error?.code === 'VALIDATION_ERROR',
+  [shotsTooMany.status, shotsTooMany.json?.error?.code],
+)
+
+const shotsBadUrl = await api('PUT', `/admin/projects/${portfolio.id}/screenshots`, [{ url: 'https://' }])
+check('截图 url 过不了「带 host 的绝对地址」→ 400（不是静默入库）',
+  shotsBadUrl.status === 400 && shotsBadUrl.json?.error?.code === 'VALIDATION_ERROR',
+  [shotsBadUrl.status, shotsBadUrl.json?.error?.code],
+)
+
+// 契约 §4.1：body 是裸数组（曾是 { items: [...] }，真后端一律 400 —— 这一行就是证据）
+const metricPut = await api('PUT', `/admin/projects/${portfolio.id}/metadata`, [
+  { key_label: 'gzip 包体', value: '42 KB', kind: 'metric' },
+  { key_label: '部署平台', value: 'Vercel' },
+])
+const metricRows = metricPut.json?.metadata ?? []
+check('元数据条目带 kind，缺省为 meta',
+  metricRows.map((m) => m.kind).join(',') === 'metric,meta',
+  metricRows.map((m) => m.kind),
+)
+/**
+ * 契约 §4.1.1：公开详情、后台详情、元数据写响应三条路径都要带 `kind`。
+ * 只验写响应会漏掉公开读侧——前端渲染指标格读的正是公开详情。
+ */
+const publicDetail = await api('GET', `/projects/${slugOf('portfolio')}`)
+check('公开详情 metadata[] 也带 kind',
+  (publicDetail.json?.metadata ?? []).every((m) => m.kind === 'meta' || m.kind === 'metric'),
+  (publicDetail.json?.metadata ?? []).map((m) => m.kind),
+)
+
+const metricTooMany = await api('PUT', `/admin/projects/${portfolio.id}/metadata`, [
+  { key_label: 'a', value: '1', kind: 'metric' },
+  { key_label: 'b', value: '2', kind: 'metric' },
+  { key_label: 'c', value: '3', kind: 'metric' },
+])
+check('metric 第 3 条 → 400（整批拒绝，不静默截断）',
+  metricTooMany.status === 400 && metricTooMany.json?.error?.code === 'VALIDATION_ERROR',
+  [metricTooMany.status, metricTooMany.json?.error?.code],
+)
+
 // ---------------------------------------------------------------- 笔记
 section('笔记（N:1）/ 摘要字段 / 可见性 / 301')
 

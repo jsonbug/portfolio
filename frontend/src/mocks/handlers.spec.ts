@@ -9,12 +9,19 @@ import type {
   AdminNoteDetail,
   AdminProjectDetail,
   AdminProjectListItem,
+  ErrorEnvelope,
   Link,
   NoteDetail,
   ProjectDetail,
   ProjectListEnvelope,
 } from '@/types'
-import { handleMockRequest, mockFetch, resetMockDb, type MockRequest } from './handlers'
+import {
+  getMockDb,
+  handleMockRequest,
+  mockFetch,
+  resetMockDb,
+  type MockRequest,
+} from './handlers'
 
 const TOKEN = 'mock-token-test'
 
@@ -195,7 +202,15 @@ describe('公开项目详情 GET /projects/{slug}', () => {
     expect(data.name).toBe('项目展示平台')
     expect(data.progress).toBe('ongoing')
     expect(data.links.map((l) => l.type)).toEqual(['repo', 'site'])
-    expect(data.metadata.map((m) => m.key_label)).toEqual(['代码行数', '测试用例'])
+    expect(data.metadata.map((m) => m.key_label)).toEqual([
+      '代码行数',
+      '测试用例',
+      'gzip 包体',
+      '长音频渲染',
+    ])
+    // 契约 4.1.1：metadata[] 在公开详情里也带 kind，指标卡条目是 metric
+    expect(data.metadata.map((m) => m.kind)).toEqual(['meta', 'meta', 'metric', 'metric'])
+    expect(data.screenshots.map((s) => s.sort)).toEqual([0, 1])
     expect(data.notes.map((n) => n.slug).sort()).toEqual(['v1-2-notes', 'why-mock-first'])
     expect(data.notes.every((n) => n.published_at !== null)).toBe(true)
   })
@@ -414,12 +429,10 @@ describe('后台项目 PATCH/DELETE/restore', () => {
 describe('自定义元数据 PUT /admin/projects/{id}/metadata', () => {
   it('整体替换并以数组顺序作为 sort', async () => {
     const res = call('PUT', '/admin/projects/proj_chart/metadata', {
-      body: {
-        items: [
-          { key_label: '包体', value: '30KB' },
-          { key_label: '覆盖率', value: '92%' },
-        ],
-      },
+      body: [
+        { key_label: '包体', value: '30KB' },
+        { key_label: '覆盖率', value: '92%' },
+      ],
     })
     expect(res.status).toBe(200)
     const detail = await bodyOf<AdminProjectDetail>(res)
@@ -429,12 +442,10 @@ describe('自定义元数据 PUT /admin/projects/{id}/metadata', () => {
 
   it('键名重复 400，超过 50 条 400', async () => {
     const dup = call('PUT', '/admin/projects/proj_chart/metadata', {
-      body: {
-        items: [
-          { key_label: '包体', value: 'a' },
-          { key_label: '包体', value: 'b' },
-        ],
-      },
+      body: [
+        { key_label: '包体', value: 'a' },
+        { key_label: '包体', value: 'b' },
+      ],
     })
     expect(dup.status).toBe(400)
 
@@ -444,9 +455,9 @@ describe('自定义元数据 PUT /admin/projects/{id}/metadata', () => {
     expect(many.status).toBe(400)
   })
 
-  it('items 非数组 400', async () => {
-    const res = call('PUT', '/admin/projects/proj_chart/metadata', { body: { items: 'x' } })
-    expect(res.status).toBe(400)
+  it('body 不是数组 → 400（契约 §4.1：裸数组，不是 { items }）', async () => {
+    expect(call('PUT', '/admin/projects/proj_chart/metadata', { body: { items: 'x' } }).status).toBe(400)
+    expect(call('PUT', '/admin/projects/proj_chart/metadata', { body: { items: [] } }).status).toBe(400)
   })
 })
 
@@ -607,5 +618,98 @@ describe('错误信封与路由', () => {
     const filtered = await call('GET', '/admin/projects', { query: { publish_status: 'archived' } })
     const filteredData = await bodyOf<{ items: AdminProjectListItem[] }>(filtered)
     expect(filteredData.items.find((item) => item.slug === 'old-blog')?.note_count).toBe(1)
+  })
+})
+
+describe('项目截图与元数据 kind（契约 4.1.1）', () => {
+  it('PUT 截图：整体替换，caption 空白归一为 null，sort 缺省用数组下标', async () => {
+    const res = await call('PUT', '/admin/projects/proj_portfolio/screenshots', {
+      body: [
+        { url: 'https://cdn.example.com/a.png', caption: '  首图  ' },
+        { url: 'https://cdn.example.com/b.png', caption: '   ' },
+      ],
+    })
+    expect(res.status).toBe(200)
+    const data = await bodyOf<AdminProjectDetail>(res)
+    expect(data.screenshots.map((shot) => shot.sort)).toEqual([0, 1])
+    expect(data.screenshots.map((shot) => shot.caption)).toEqual(['首图', null])
+
+    // 整体替换：上一次的两张被删掉
+    const again = await call('PUT', '/admin/projects/proj_portfolio/screenshots', {
+      body: [{ url: 'https://cdn.example.com/c.png' }],
+    })
+    expect((await bodyOf<AdminProjectDetail>(again)).screenshots).toHaveLength(1)
+  })
+
+  it('PUT 截图 [] 清空，且无截图的项目是 [] 而不是 null', async () => {
+    const cleared = await call('PUT', '/admin/projects/proj_portfolio/screenshots', { body: [] })
+    expect((await bodyOf<AdminProjectDetail>(cleared)).screenshots).toEqual([])
+
+    const detail = await bodyOf<ProjectDetail>(call('GET', '/projects/crawler-tools'))
+    expect(detail.screenshots).toEqual([])
+  })
+
+  it('PUT 截图：超过 10 张 / 非 http(s) / 无主机 / 含空白 一律 400', async () => {
+    const tooMany = await call('PUT', '/admin/projects/proj_portfolio/screenshots', {
+      body: Array.from({ length: 11 }, (_, i) => ({ url: `https://cdn.example.com/${i}.png` })),
+    })
+    expect(tooMany.status).toBe(400)
+    expect((await bodyOf<ErrorEnvelope>(tooMany)).error.code).toBe('VALIDATION_ERROR')
+
+    for (const url of [
+      'javascript:alert(1)',
+      'data:image/png;base64,AAAA',
+      '/relative/shot.png',
+      'https://',
+      'http://e.com/a b.png',
+    ]) {
+      const res = await call('PUT', '/admin/projects/proj_portfolio/screenshots', {
+        body: [{ url }],
+      })
+      expect(res.status, url).toBe(400)
+      expect((await bodyOf<ErrorEnvelope>(res)).error.details?.[0].field).toBe('[0].url')
+    }
+  })
+
+  it('PUT 截图：body 不是数组 → 400（这是裸数组接口，不是 {items}）', async () => {
+    const res = await call('PUT', '/admin/projects/proj_portfolio/screenshots', {
+      body: { items: [{ url: 'https://cdn.example.com/a.png' }] },
+    })
+    expect(res.status).toBe(400)
+    expect((await bodyOf<ErrorEnvelope>(res)).error.code).toBe('VALIDATION_ERROR')
+  })
+
+  it('PUT 元数据：kind 缺省 meta，三条 metric 整批 400，metric 键值长度更严', async () => {
+    const withDefault = await call('PUT', '/admin/projects/proj_portfolio/metadata', {
+      body: [{ key_label: '部署平台', value: 'Vercel' }],
+    })
+    expect((await bodyOf<AdminProjectDetail>(withDefault)).metadata[0].kind).toBe('meta')
+
+    const threeMetrics = await call('PUT', '/admin/projects/proj_portfolio/metadata', {
+      body: [
+        { key_label: 'a', value: '1', kind: 'metric' },
+        { key_label: 'b', value: '2', kind: 'metric' },
+        { key_label: 'c', value: '3', kind: 'metric' },
+      ],
+    })
+    expect(threeMetrics.status).toBe(400)
+
+    const tooLong = await call('PUT', '/admin/projects/proj_portfolio/metadata', {
+      body: [{ key_label: '这是一个超过十六个字符的指标卡标签', value: '1', kind: 'metric' }],
+    })
+    expect(tooLong.status).toBe(400)
+
+    const badKind = await call('PUT', '/admin/projects/proj_portfolio/metadata', {
+      body: [{ key_label: 'a', value: '1', kind: 'other' }],
+    })
+    expect(badKind.status).toBe(400)
+  })
+
+  it('元数据 / 截图保存都 bump 项目 updated_at（保存即内容变更）', async () => {
+    const before = getMockDb().projects.find((p) => p.id === 'proj_portfolio')!.updated_at
+    await call('PUT', '/admin/projects/proj_portfolio/metadata', {
+      body: [{ key_label: '代码行数', value: '19k' }],
+    })
+    expect(getMockDb().projects.find((p) => p.id === 'proj_portfolio')!.updated_at).not.toBe(before)
   })
 })
