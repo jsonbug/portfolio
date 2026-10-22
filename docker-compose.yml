@@ -52,9 +52,11 @@ services:
       context: .
       dockerfile: Dockerfile.web
       args:
-        # 构建期注入：同源代理路径 + 关闭 mock
-        VITE_API_BASE_URL: /api/v1
+        # 构建期注入：同源代理路径 + 关闭 mock + 前端基路径
+        # WEB_BASE_PATH 默认 /（直连 8431 用）；挂到 /home/topuser/apps/router 前缀时改成 /apps/portfolio/
+        VITE_API_BASE_URL: ${WEB_API_BASE_URL:-/api/v1}
         VITE_USE_MOCK: "false"
+        VITE_BASE: ${WEB_BASE_PATH:-/}
     image: portfolio-web:local
     ports:
       # 宿主端口可覆盖（如 8080 被占用：WEB_PORT=8180 docker compose up -d）

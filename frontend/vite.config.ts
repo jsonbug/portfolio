@@ -4,6 +4,9 @@ import { defineConfig } from 'vite'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // 基路径：默认挂在根。挂到路由器前缀（如 /apps/portfolio/）时用 VITE_BASE 注入，
+  // 构建产物里的资源路径与 vue-router 的 history base 都跟着走（见 router/index.ts 的 import.meta.env.BASE_URL）。
+  base: process.env.VITE_BASE || '/',
   plugins: [vue()],
   resolve: {
     alias: {
