@@ -14,10 +14,14 @@ RUN npm ci
 COPY frontend/ ./
 
 # 生产构建固定走真实后端、同源 /api/v1（反向代理到 api 服务）
+# VITE_BASE：前端基路径。挂在反代前缀（如 /apps/portfolio/）时必须与之同值，
+# 否则 index.html 里的 /assets/... 与 vue-router 的 history base 都会指到站点根。
 ARG VITE_API_BASE_URL=/api/v1
 ARG VITE_USE_MOCK=false
+ARG VITE_BASE=/
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL} \
-    VITE_USE_MOCK=${VITE_USE_MOCK}
+    VITE_USE_MOCK=${VITE_USE_MOCK} \
+    VITE_BASE=${VITE_BASE}
 
 RUN npm run build
 
