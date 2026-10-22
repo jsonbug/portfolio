@@ -1,6 +1,6 @@
 # v1.2 计划状态对照
 
-> **基于 `139df5f`**（`main` 与 `integration/v1.2` 同点）。更新本表时只改这一行和对应行。
+> **基于 `428aa2a`**（`main` 与 `integration/v1.2` 同点）。更新本表时只改这一行和对应行。
 >
 > 用途：计划表原件是 ALICE-4 的附件、不在仓库，本文件只做**状态对照**——不复制计划正文、不改写其措辞（两份文档互相打脸的成本比省下的字高）。
 > 判定口径沿用验收阶段立下的规矩：判「已交付」必须给 `file:line`，判「未交付」必须说缺什么。
@@ -26,7 +26,7 @@
 | F4 笔记栏目 | P0 | 已交付 | `frontend/src/components/NoteTree.vue` 被 `NotesView.vue:123` 与 `NoteDetailView.vue:6` 共用（左栏分组 2 行截断 + 搜索）；`NoteTree.vue:85`「仅显示最近 100 篇」（`total > 100` 提示）；详情三栏 + 目录 + 上下篇 + 标签 + 阅读时长 |
 | F5 元数据展示 | P0 | 已交付 | `ProjectDetailView.vue:91-100`（状态/进展两徽标堆叠 + 起始年份 + 我的角色 + 团队规模 + 开源协议，空值不渲染） |
 | F6 搜索/筛选/排序 | P0 | 已交付 | `frontend/src/composables/useProjectListFilters.ts:25-29`（分段仅三项：全部 / 进行中 / 已上线，无归档）、`:31-34`（最近更新 / star）；300ms 防抖、URL query 持久化、空态「清除筛选」 |
-| **F7 响应式** | P1 | **必修中（不通过）** | 390×844 coarse 实测 `documentElement.scrollWidth = 444 > innerWidth 390`（首页与 `/projects/:slug` 均成立），溢出元素 `.header-right`（`frontend/src/components/AppHeader.vue:49`）；coarse 热区实测：顶栏导航 39×52、分段 61×32、排序 `select` 108×36、轮播箭头 30×32、面包屑 26×26 —— 44px 只在 `frontend/src/style.css:305-310` 给了 `.btn-icon` |
+| F7 响应式 | P1 | 已交付 | 390×844 coarse（真 Chrome CDP）实测 `documentElement.scrollWidth`：`/` 444→**390**、`/projects/:slug` 444→**390**、`/notes` 444→**390**，`innerWidth` 均 390；窄屏折叠 `frontend/src/components/AppHeader.vue:291`（`@media (max-width: 420px)`，搜索折叠成 44×44、导航 `white-space: nowrap` 不折行、`Escape` 收起并还焦点）；coarse 热区提到通用控件层 `frontend/src/style.css:377`（`.btn/.input/.select/.textarea/.segment/.pager-btn` 抬 `min-height`，`.pager-btn/.shot-nav button/.site-nav .nav-link` 抬 `min-width`）；实测：分段 61×32→**69×44**、排序 `select` 108×36→**108×44**、列表搜索 36→**300×44**、轮播箭头 30×32→**44×44**、面包屑 26×26→**44×44**、顶栏导航 39×52→**54×44**、后台页码 32×32→**44×44**、顶栏搜索（折叠态）→**44×44**；断言在 `frontend/src/styles/touch.spec.ts`（`--touch-min` 必须 44、coarse 层须覆盖 11 个选择器、层内出现 `font-size`/`line-height` 直接红、`.segment`/`.pager-btn` 只许在 `style.css` 定义） | 后台 `/admin/projects` 在 390 仍是表格内部横滚、页面级不横滚——后台最小宽 768 是既定口径；390 展开态无遮罩关闭（触屏无 `Escape`，但「✕」44×44 且可见），已登记未做 |
 | F8 关于页 | P1 | 移出 v1.2 | → ALICE-9。无 `/about` 路由、`AppHeader.vue` 无「关于」入口，**不存在死链** |
 | F9 链接失效降级 | P1 | 已交付 | `ProjectDetailView.vue:360-373` 只对 `last_status === 'failed'` 降级，`ok` / `unknown` / `null` 同款渲染；口径差异 ② |
 | F10 暗色模式 | P2 | 本期不做 | 计划原文即「本期不做」 |
@@ -63,7 +63,7 @@
 | ④ | B2 编辑形态 | 「**抽屉内**并列二级折叠」 | 独立路由页 `/admin/projects/:id/edit`，两个分区仍默认折叠 | 抽屉里要放 20+ 字段，480 宽必然长滚，抽屉唯一的收益（编辑时还能看见列表）被滚动抵消，还多一层嵌套滚动容器；功能等价，只是形态差异 |
 | ⑤ | B8 状态条 | 效果图 `06` 底部状态条横跨全宽 | 只在中栏（编辑器自己的底边） | 三栏是三块并列的工作面，全宽条会把编辑器从三栏里视觉切出来；「未保存 N 处」本就是编辑器的状态 |
 | ⑥ | B1 「剩余 N 次尝试」 | 计划未写此条，实现侧曾有提案 | **不实现**。限流在 nginx 边缘（`nginx.conf:36` `rate=5r/m`、`:66` `burst=4`、`:65` 只挂 `POST /api/v1/auth/login`、429 为 nginx HTML 无 `error.code`），后端不建计数表、契约 §1.3 值域不动 | 单管理员登录防的是公网暴力破解，边缘限流足够；且不向未认证方暴露尝试状态（把剩余次数显示给攻击者本身是净负收益）。前端保留 `429 → 尝试次数过多` 分支，边缘触发后即生效 |
-| ⑦ | B16 状态枚举 | 「`last_status ∈ {ok, timeout, error}`」 | 实际 `{ok, failed, unknown}`（`types/enums.ts:39-44`，契约同值域） | 三态**语义**保留（正常 / 检查失败 / 未检查）；`failed` 一档吸收了超时与错误，区分超时/错误对前台降级判断没有用。**本条待研发负责人确认登记**，未拍板前按「已实现口径」记录，不算「按计划通过」 |
+| ⑦ | B16 状态枚举 | 「`last_status ∈ {ok, timeout, error}`」 | **已拍板**：`{ok, failed, unknown}`（`types/enums.ts:39-44`，契约同值域） | ① `timeout` 与 `error` 对**前台降级判断**没有区别——两种都是「这个链接现在打不开」，前台只做灰显 + 失效图标，不需要分支；② 对外三态、**超时/错误区分仅进服务端日志**，不让失败原因的措辞变成客户端依赖的契约（与「`details[].code` 不得依赖」同一思路） |
 
 ## 五、移出 v1.2 的条目
 
@@ -77,7 +77,7 @@
 ## 六、状态取值
 
 - **已交付**：代码在 `139df5f` 上可指认，且有用例或实测证据。
-- **必修中（不通过）**：有明确缺陷、已派单，未修完前该项验收不成立（当前仅 F7）。
+- **必修中（不通过）**：有明确缺陷、已派单，未修完前该项验收不成立（当前无）。
 - **移出 v1.2**：已建单，不属于 v1.2 验收范围；不算欠账。
 - **本期不做**：计划原文自述不做。
 - **编号不存在**：计划表本身没有这个编号，无对象可验。
