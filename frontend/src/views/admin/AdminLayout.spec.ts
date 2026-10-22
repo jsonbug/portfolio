@@ -16,6 +16,13 @@ async function renderLayout(initial = '/admin/projects') {
         children: [
           { path: 'projects', name: 'admin-projects', component: { template: '<div>list</div>' } },
           { path: 'projects/new', name: 'admin-project-new', component: { template: '<div>new</div>' } },
+          { path: 'notes', name: 'admin-notes', component: { template: '<div>notes</div>' } },
+          {
+            path: 'notes/:id',
+            name: 'admin-note-edit',
+            component: { template: '<div>note edit</div>' },
+            props: true,
+          },
           { path: 'notes/new', name: 'admin-note-new', component: { template: '<div>note</div>' } },
         ],
       },
@@ -32,7 +39,12 @@ describe('AdminLayout 侧栏（03 稿）', () => {
     await renderLayout()
     const nav = await screen.findByRole('navigation', { name: '后台导航' })
     const links = within(nav).getAllByRole('link')
-    expect(links.map((link) => link.textContent?.trim())).toEqual(['项目列表', '新建项目', '新建笔记'])
+    expect(links.map((link) => link.textContent?.trim())).toEqual([
+      '项目列表',
+      '笔记',
+      '新建项目',
+      '新建笔记',
+    ])
     for (const link of links) {
       const icon = link.querySelector('svg')
       expect(icon).not.toBeNull()
@@ -47,6 +59,19 @@ describe('AdminLayout 侧栏（03 稿）', () => {
     const active = within(nav).getAllByRole('link').filter((link) => link.classList.contains('router-link-active'))
     expect(active).toHaveLength(1)
     expect(active[0]).toHaveTextContent('项目列表')
+  })
+
+  it('「笔记」在列表页与编辑器页都高亮（两条不同的路由记录）', async () => {
+    for (const path of ['/admin/notes', '/admin/notes/note_x1']) {
+      document.body.innerHTML = ''
+      await renderLayout(path)
+      const nav = await screen.findByRole('navigation', { name: '后台导航' })
+      const highlighted = within(nav)
+        .getAllByRole('link')
+        .filter((link) => link.className.includes('nav-link--active'))
+      expect(highlighted).toHaveLength(1)
+      expect(highlighted[0]).toHaveTextContent('笔记')
+    }
   })
 
   it('退出登录清掉令牌并回登录页', async () => {
