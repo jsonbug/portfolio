@@ -11,7 +11,7 @@
   --c-primary-soft: #edf0fe; /* 承载 #1e36a0 文字 */
   /* 辅色（赤陶，仅点缀） */
   --c-accent: #b84a22;
-  --c-accent-soft: #fbe0e6;
+  --c-accent-soft: #fbede6; /* 提示块桃底（09 稿指定值，配 Clay 深字 5.6:1） */
 
   /* 中性色：越往下越轻，--c-text-placeholder 及更浅不承载正文语义 */
   --c-ink: #14110d; /* 主文字 17.0:1 */
@@ -21,16 +21,25 @@
   --c-border: #e6e2db; /* 1px 分割线 / 装饰元数据 */
   --c-control-border: #d6d1c8; /* 输入框描边 */
   --c-fill: #f4f2ee; /* 次级填充：标签 / hover 底 */
-  --c-surface: #ffffff; /* 页面底 / 卡片 */
+  --c-surface: #ffffff;
+  /* 正文里的代码块（走查 #17：深色） */
+  --c-code-bg: #201e1b;
+  --c-code-text: #f4f2ee; /* 卡片 / 输入框 */
+  --c-page: #fbfaf8; /* 页面底 Paper（09 稿），与白卡片拉开层次 */
 
   /* 语义色（只用状态，不做品牌表达） */
   --c-success: #1e7a4d; /* 已上线 5.4:1 */
   --c-warning: #8a5b00; /* 进行中 5.9:1 */
   --c-danger: #b4342b; /* 错误 6.1:1 */
+  /* 徽标底（走查 #5 指定值；字色对底色的比值见 tokens.spec.ts） */
+  --c-success-soft: #e7f3ec; /* 已上线底 */
+  --c-warning-soft: #faf0dc; /* 进行中底 */
+  --c-danger-soft: #fbe9e7; /* 危险底 */
   --c-neutral-badge-bg: #f1efec; /* 已归档底 */
+  --c-published-badge-bg: #efeee9; /* 已发布底（走查 #5） */
   --c-neutral-badge-text: #6e6862; /* 已归档徽标文字 4.8:1（D6 指定值，保留实心方块） */
 
-  /* 封面渐层兜底（与 utils/cover.ts 的 GRADIENT_PRESETS 为同一组 6 套预设） */
+  /* 封面占位渐层（只在「有封面但未加载完」时用；无封面兜底是 07 稿的首字+网格，故不使用） */
   --cover-grad-1-from: #1b2350;
   --cover-grad-1-to: #5b79f0;
   --cover-grad-2-from: #12372f;
@@ -121,7 +130,7 @@
   font-size: var(--fs-body);
   line-height: var(--lh-body);
   color: var(--c-text);
-  background-color: var(--c-surface);
+  background-color: var(--c-page);
 }
 
 *,
@@ -133,6 +142,7 @@
 body {
   margin: 0;
   min-height: 100vh;
+  background: var(--c-page);
 }
 
 /* ---------- 排版工具类（Style Tile 字号阶梯的可复用出口） ---------- */

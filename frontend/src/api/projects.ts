@@ -12,6 +12,7 @@ import type {
   ProjectSort,
   ProjectUpdate,
   PublishStatus,
+  ScreenshotInput,
 } from '@/types'
 
 /** 前台列表查询：`technology` 为数组，按重复参数下发。 */
@@ -79,14 +80,30 @@ export function restoreProject(id: string): Promise<AdminProjectDetail> {
   return request<AdminProjectDetail>(`/admin/projects/${encodeURIComponent(id)}/restore`, { method: 'POST' })
 }
 
-/** 整体替换自定义元数据（KV），数组顺序即 `sort`。 */
+/**
+ * 整体替换自定义元数据（KV），数组顺序即 `sort`。
+ *
+ * body 是**裸数组**（契约 §4.1）：曾经按 `{ items }` 发包，真后端一律 400
+ * ——契约表加了这一行才暴露，见 `test/contract/run.mjs` 的截图/kind 段。
+ */
 export function replaceProjectMetadata(
   id: string,
   items: MetadataItemInput[],
 ): Promise<AdminProjectDetail> {
   return request<AdminProjectDetail>(`/admin/projects/${encodeURIComponent(id)}/metadata`, {
     method: 'PUT',
-    body: JSON.stringify({ items }),
+    body: JSON.stringify(items),
+  })
+}
+
+/** 整体替换项目截图：body 是裸数组，返回更新后的后台详情（会 bump `updated_at`）。 */
+export function replaceProjectScreenshots(
+  id: string,
+  items: ScreenshotInput[],
+): Promise<AdminProjectDetail> {
+  return request<AdminProjectDetail>(`/admin/projects/${encodeURIComponent(id)}/screenshots`, {
+    method: 'PUT',
+    body: JSON.stringify(items),
   })
 }
 

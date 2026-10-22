@@ -59,3 +59,34 @@ export const MAX_SEARCH_LENGTH = 200
 export function clampSearch(value: string | null | undefined): string {
   return (value ?? '').trim().slice(0, MAX_SEARCH_LENGTH)
 }
+
+/**
+ * 后台列表的紧凑更新时间（效果图 `04-后台项目管理.png`：`10-18` / `昨天` / `09-30`）。
+ *
+ * 今天 / 昨天用词，其余用 `MM-DD`；跨年也仍用 `MM-DD`（列表里只有近月数据，加年份反而更长）。
+ */
+export function formatShortDate(iso: string | null, now: number = Date.now()): string {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  const days = daysAgo(iso, now)
+  if (days === 0) return '今天'
+  if (days === 1) return '昨天'
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  return `${month}-${day}`
+}
+
+/**
+ * 前台卡片的相对时间（走查 #4：卡片底栏写「3 天前」，不是 `2026-10-18`）。
+ *
+ * 30 天以内用相对说法，更久回到 `MM-DD` —— 「87 天前」读者还得自己换算，反而更难理解。
+ */
+export function formatRelativeDay(iso: string | null, now: number = Date.now()): string {
+  const days = daysAgo(iso, now)
+  if (days == null) return ''
+  if (days === 0) return '今天'
+  if (days === 1) return '昨天'
+  if (days < 30) return `${days} 天前`
+  return formatShortDate(iso, now)
+}

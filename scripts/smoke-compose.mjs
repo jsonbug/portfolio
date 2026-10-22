@@ -129,11 +129,80 @@ check('健康检查返回 ok', health.data?.status === 'ok', JSON.stringify(heal
 
 // ---- 3. 认证 ----
 await req('GET', '/admin/projects', { expect: 401 });
-await req('POST', '/auth/login', { body: { username: USER, password: `${PASS}-wrong` }, expect: 401 });
-const login = await req('POST', '/auth/login', { body: { username: USER, password: PASS }, expect: 200 });
-const token = login.data?.token;
+
+// ---- 3.1 登录边缘限流（nginx `limit_req`，rate=5r/m burst=4 → 连错 5 次后第 6 次 429）----
+// 只靠「连打 6 次看第 6 次是不是 429」不够：本脚本容许反复跑，上一次跑剩下的令牌会让第 6 次
+// 提前变 429（假红），或者被别人先喝干又变全 401（假绿）。所以先探测令牌桶状态：
+// **一批连打里 401 的条数 = 桶里当前令牌数**，直到看到「5 次 401 紧跟 429」那一批——它本身就是断言证据。
+// 用原始 fetch 而不是 req()：中间那些 429 是探测过程，不该计入 PASS/FAIL。
+const rawLogin = async (password) => {
+  const res = await fetch(`${API}/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: USER, password }),
+  });
+  const text = await res.text();
+  return { status: res.status, server: res.headers.get('server') ?? '', body: text };
+};
+const burstOf6 = async () => {
+  const rows = [];
+  for (let i = 0; i < 6; i += 1) rows.push(await rawLogin(`${PASS}-wrong`));
+  return rows;
+};
+const isAllowedThenBlocked = (rows) => rows.slice(0, 5).every((r) => r.status === 401) && rows[5]?.status === 429;
+
+let burst = await burstOf6();
+if (!isAllowedThenBlocked(burst)) {
+  // 桶不干净（上一次跑剩的令牌 / 别人刚打过）：先喝干，再等满桶。rate=5r/m → 5 个令牌要 60s。
+  // 只在需要时才付这 60s：CI 里是全新 nginx（桶是满的），第一次就命中，不进这个分支。
+  const drain = [];
+  for (let i = 0; i < 8; i += 1) {
+    const row = await rawLogin(`${PASS}-wrong`);
+    drain.push(row);
+    if (row.status === 429) break;
+  }
+  if (drain.some((r) => r.status === 429)) {
+    console.log('INFO  边缘限流：令牌桶非满，等 62s 回填后重测（只在本机反复跑时会走到）');
+    await new Promise((r) => setTimeout(r, 62_000));
+    burst = await burstOf6();
+  } else {
+    burst = drain.concat(burst); // 连 14 次都没 429 → 限流没生效，保留现场给下面的断言判红
+  }
+}
+check(
+  '边缘限流：连错 5 次仍是 401，第 6 次被 nginx 挡下 → 429',
+  isAllowedThenBlocked(burst),
+  isAllowedThenBlocked(burst) ? '401×5 → 429' : `实际 ${JSON.stringify(burst.map((r) => r.status))}`,
+);
+check(
+  '限流的 429 来自 nginx 边缘，不是后端返回的契约信封',
+  burst[5]?.server === 'nginx' && !burst[5].body.includes('"error"'),
+  `server=${burst[5]?.server} body=${(burst[5]?.body ?? '').slice(0, 40)}`,
+);
+
+// 限流必须只挂在登录这一个精确 location 上：此刻桶是空的，其它 API 还得通。
+const notLogin = await rawLogin(`${PASS}-wrong`); // 再确认一次桶确实空了（应仍 429）
+const healthAfterLimit = await fetch(`${API}/health`);
+check(
+  '限流只作用于登录：桶空时其它 API 不受影响（/health 仍 200）',
+  notLogin.status === 429 && healthAfterLimit.status === 200,
+  `login=${notLogin.status} health=${healthAfterLimit.status}`,
+);
+
+// 令牌桶回填：有界轮询（最多 60s）。限流不该变成永久封禁，这一条正是断「能恢复」。
+let login = null;
+for (let waited = 0; waited <= 60_000; waited += 3000) {
+  const attempt = await rawLogin(PASS);
+  if (attempt.status === 200) {
+    login = { status: 200, data: JSON.parse(attempt.body) };
+    break;
+  }
+  if (waited < 60_000) await new Promise((r) => setTimeout(r, 3000));
+}
+check('限流过后能重新登录（令牌桶回填，不是永久封禁）', login !== null, login ? '200' : '60s 内未恢复');
+const token = login?.data?.token;
 if (!token) {
-  bad('登录拿到 token', JSON.stringify(login.data).slice(0, 200));
+  bad('登录拿到 token', login ? JSON.stringify(login.data).slice(0, 200) : '限流后 60s 内未能登录');
   console.log('\n登录失败，后续用例跳过。');
   process.exit(1);
 }

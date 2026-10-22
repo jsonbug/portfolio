@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 列表首屏骨架：结构对齐 ProjectCard，避免加载完成时的布局跳动（CLS）。 */
+/** 列表首屏骨架：结构对齐 ProjectCard，高度锁死 329（走查 #30），避免加载完成时的布局跳动（CLS）。 */
 withDefaults(defineProps<{ count?: number }>(), { count: 6 })
 </script>
 
@@ -27,6 +27,8 @@ withDefaults(defineProps<{ count?: number }>(), { count: 6 })
 }
 .skeleton-card {
   overflow: hidden;
+  /* 走查 #30：卡片高锁死 329，骨架 → 真实卡片时不留跳动（CLS） */
+  height: 329px;
 }
 .skeleton {
   background: linear-gradient(90deg, var(--c-fill) 25%, #eceae5 37%, var(--c-fill) 63%);

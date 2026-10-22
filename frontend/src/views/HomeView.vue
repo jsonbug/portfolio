@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { listPublicNotes } from '@/api/notes'
 import { listTechnologies } from '@/api/technologies'
 import ProjectCard from '@/components/ProjectCard.vue'
 import ProjectCardSkeleton from '@/components/ProjectCardSkeleton.vue'
@@ -30,17 +31,33 @@ const filters = computed(() => parseFilters(route.query))
 const { items, counts, total, loading, error, reload } = useProjectList(filters)
 
 const technologies = ref<string[]>([])
+/** 笔记总数：直接取 `/notes` 的 `total`，不在前端另算口径（派单批乙-改 1）。 */
+const noteTotal = ref<number | null>(null)
 
 onMounted(async () => {
-  try {
-    technologies.value = (await listTechnologies()).items
-  } catch {
-    // 技术栈选项拿不到不影响列表主体，只是少一个筛选维度。
-    technologies.value = []
-  }
+  const [techResult, noteResult] = await Promise.allSettled([
+    listTechnologies(),
+    listPublicNotes({ page: 1, pageSize: 1 }),
+  ])
+  // 技术栈选项拿不到不影响列表主体，只是少一个筛选维度。
+  technologies.value = techResult.status === 'fulfilled' ? techResult.value.items : []
+  noteTotal.value = noteResult.status === 'fulfilled' ? noteResult.value.total : null
 })
 
 const filtered = computed(() => !isDefaultFilters(filters.value))
+
+/**
+ * 英雄区三格统计（01 稿订正）：项目总数 / 已上线 / 笔记数。
+ *
+ * 前两格来自列表响应的 `counts`（契约 §3.1：counts 在 search+technology 之后、progress 之前算），
+ * 所以切分段时不动，只有搜索与技术栈会让它们一起变——正是稿上的语义。
+ * 第三格是笔记总数（取 `/notes` 的 `total`）：「进行中」已有分段计数，再放一格是重复。
+ */
+const heroStats = computed(() => [
+  { key: 'all', label: '全部项目', value: counts.value.all },
+  { key: 'launched', label: '已上线', value: counts.value.launched },
+  { key: 'notes', label: '笔记', value: noteTotal.value },
+])
 
 /** 页头汇总里的「最近更新」：取当前结果集里最新的一次更新。 */
 const recentText = computed(() => {
@@ -113,14 +130,23 @@ function clearFilters(): void {
 </script>
 
 <template>
-  <main class="home">
+  <main class="home page">
     <header class="home-header">
-      <h1 class="type-display">项目</h1>
-      <p v-if="!showSkeleton && total > 0" class="home-summary">
-        <span class="tabular-nums">{{ total }} 个项目</span>
-        <span v-if="recentText" aria-hidden="true"> · </span>
-        <span v-if="recentText">{{ recentText }}</span>
-      </p>
+      <div class="home-title">
+        <h1 class="type-display">项目</h1>
+        <p v-if="!showSkeleton && total > 0" class="home-summary">
+          <span class="tabular-nums">{{ total }} 个项目</span>
+          <span v-if="recentText" aria-hidden="true"> · </span>
+          <span v-if="recentText">{{ recentText }}</span>
+        </p>
+      </div>
+      <!-- 01 稿：英雄区三格统计，数字直接取列表 counts，不额外发请求 -->
+      <dl v-if="!showSkeleton && total > 0" class="home-stats">
+        <div v-for="stat in heroStats" :key="stat.key" class="home-stat">
+          <dt class="type-small">{{ stat.label }}</dt>
+          <dd class="tabular-nums">{{ stat.value ?? '—' }}</dd>
+        </div>
+      </dl>
     </header>
 
     <ProjectFilterBar
@@ -141,11 +167,16 @@ function clearFilters(): void {
 
     <ProjectCardSkeleton v-if="showSkeleton" />
 
-    <ProjectEmptyState v-else-if="showEmpty" :filtered="filtered" @clear="clearFilters" />
+    <ProjectEmptyState
+      v-else-if="showEmpty"
+      :filtered="filtered"
+      :query="filters.q"
+      @clear="clearFilters"
+    />
 
     <template v-else>
       <ul class="grid" :aria-busy="loading">
-        <li v-for="item in items" :key="item.id">
+        <li v-for="item in items" :key="item.id" class="grid-item">
           <ProjectCard :item="item" />
         </li>
       </ul>
@@ -159,9 +190,46 @@ function clearFilters(): void {
 <style scoped>
 .home-header {
   display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-24);
+  margin-bottom: var(--space-24);
+}
+.home-title {
+  display: flex;
   flex-direction: column;
   gap: var(--space-8);
-  margin-bottom: var(--space-24);
+}
+.home-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(88px, auto));
+  gap: var(--space-24);
+  margin: 0;
+  text-align: right;
+}
+.home-stat {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+}
+.home-stat dt {
+  color: var(--c-text-secondary);
+}
+.home-stat dd {
+  margin: 0;
+  font-size: var(--fs-h2);
+  line-height: var(--lh-h2);
+  font-weight: var(--fw-semibold);
+  color: var(--c-ink);
+}
+@media (max-width: 767px) {
+  .home-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .home-stats {
+    text-align: left;
+  }
 }
 .home-header h1 {
   margin: 0;
@@ -190,6 +258,10 @@ function clearFilters(): void {
   line-height: var(--lh-small);
   color: var(--c-text-secondary);
   text-align: center;
+}
+.grid-item {
+  display: flex;
+  min-width: 0;
 }
 .grid {
   list-style: none;

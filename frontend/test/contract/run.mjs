@@ -78,6 +78,21 @@ function check(name, cond, extra) {
   })
 }
 
+/**
+ * 清场：**只软删本次 RUN 前缀的项目**，绝不发全局清理。
+ *
+ * 必须定义在模块顶层：CLI 的 `finally` 在 `runPlan` 之外调用它。
+ * （曾经嵌在 `runPlan` 里，开头调用正常、收尾却 `ReferenceError`，只在 `--source both` 收尾才暴露。）
+ */
+async function cleanupRunProjects() {
+  const existing = await api('GET', '/admin/projects?pageSize=100&includeDeleted=true')
+  const mine = (existing.json?.items ?? []).filter((item) => item.slug.startsWith(`${RUN}-`))
+  for (const item of mine) {
+    if (!item.deleted_at) await api('DELETE', `/admin/projects/${item.id}`)
+  }
+  return mine.length
+}
+
 /** 结构性断言：整张表只能有 `kind === 'must'`。 */
 function assertNoTodoRows(list) {
   const unexpected = list.filter((row) => row.kind !== 'must')
@@ -145,21 +160,8 @@ export async function runPlan(opts) {
   bailIfFailed(cleaned, '哨兵软删')
 
 
-/**
- * 清场：**只软删本次 RUN 前缀的项目**，绝不发全局清理。
- *
- * 全局 reset（删掉库里所有项目）在端口撞车时会把别人的库清空，这是 P0：假绿是骗人，这个是删数据。
- * 本脚本的自证只证明「这套库能读能写」，不证明「这套库专属于我」，所以清理必须按自己的命名前缀收窄。
- * 代价是库里可能有别的 RUN 残留：计数断言因此全部改成「基线 + 本次增量」，见 `attachBaseline()`。
- */
-async function cleanupRunProjects() {
-  const existing = await api('GET', '/admin/projects?pageSize=100&includeDeleted=true')
-  const mine = (existing.json?.items ?? []).filter((item) => item.slug.startsWith(`${RUN}-`))
-  for (const item of mine) {
-    if (!item.deleted_at) await api('DELETE', `/admin/projects/${item.id}`)
-  }
-  return mine.length
-}
+// 清场逻辑见模块顶部的 `cleanupRunProjects`（CLI 收尾也要用，必须放顶层）。
+// 代价是库里可能有别的 RUN 残留：计数断言因此全部改成「基线 + 本次增量」，见 `attachBaseline()`。
 
 /** 清场后的公开面基线（别的 RUN 残留会一直存在，计数断言一律相对它）。 */
 let baseline = { total: 0, counts: { all: 0, ongoing: 0, launched: 0 } }
@@ -494,6 +496,145 @@ const techs = await api('GET', '/technologies')
   )
 }
 
+// ---------------------------------------------------------------- 后台项目列表：键集合
+section('后台项目列表 / 键集合 / note_count')
+
+const adminList = await api('GET', '/admin/projects?pageSize=5&includeDeleted=true')
+const adminItem = adminList.json?.items?.[0] ?? {}
+const adminKeys = Object.keys(adminItem).sort()
+/**
+ * 契约 §4.1：AdminProjectListItem = ProjectListItem + publish_status / published_at / deleted_at / note_count。
+ * 这一行是「字段在契约与真后端有、mock 没有也不会红」的补丁——note_count 差一点就这么漏过去。
+ * 两侧（real / mock）都要给出同一组键，差一个键就红。
+ */
+const CONTRACT_ADMIN_ITEM_KEYS = [
+  'cover_image_url',
+  'created_at',
+  'deleted_at',
+  'id',
+  'last_updated_at',
+  'links',
+  'name',
+  'note_count',
+  'progress',
+  'publish_status',
+  'published_at',
+  'slug',
+  'stars',
+  'summary',
+  'tech_stack',
+  'updated_at',
+  'version',
+]
+check(
+  '后台列表项键集合 = 契约 4.1（含 note_count，无 cover_source_url）',
+  adminKeys.join(',') === CONTRACT_ADMIN_ITEM_KEYS.join(','),
+  adminKeys,
+)
+check(
+  'note_count 是非负整数',
+  Number.isInteger(adminItem.note_count) && adminItem.note_count >= 0,
+  adminItem.note_count,
+)
+check('cover_source_url 只在详情', !('cover_source_url' in adminItem), Object.keys(adminItem))
+
+// ---------------------------------------------------------------- 截图 / 元数据 kind
+section('项目截图 / 元数据 kind（契约 §4.1.1）')
+
+const shotBase = 'https://cdn.example.com/contract'
+const shotsPut = await api('PUT', `/admin/projects/${portfolio.id}/screenshots`, [
+  { url: `${shotBase}-1.png`, caption: '  首图  ' },
+  { url: `${shotBase}-2.png`, caption: '   ' },
+])
+check('PUT /screenshots 返回 200 且回后台详情', shotsPut.status === 200, shotsPut.status)
+const shotRows = shotsPut.json?.screenshots ?? []
+/**
+ * 契约 §4.1.1：截图是裸数组整体替换；`sort` 缺省用数组下标；
+ * `caption` 空白归一为 `null`（wire 上不出现空串，客户端不必处理 ""）。
+ */
+check('截图条目键集合 = id / url / caption / sort', 
+  Object.keys(shotRows[0] ?? {}).sort().join(',') === 'caption,id,sort,url',
+  Object.keys(shotRows[0] ?? {}),
+)
+check('截图 sort 按下标补齐（0,1）', shotRows.map((s) => s.sort).join(',') === '0,1', shotRows.map((s) => s.sort))
+check('截图 caption 裁剪，空白归一为 null', shotRows[0]?.caption === '首图' && shotRows[1]?.caption === null,
+  shotRows.map((s) => s.caption))
+
+const shotsEmpty = await api('PUT', `/admin/projects/${portfolio.id}/screenshots`, [])
+check('PUT /screenshots [] 清空且返回 []', 
+  shotsEmpty.status === 200 && Array.isArray(shotsEmpty.json?.screenshots) && shotsEmpty.json.screenshots.length === 0,
+  shotsEmpty.json?.screenshots,
+)
+check('无截图的项目 `screenshots` 是 [] 不是 null',
+  Array.isArray(shotsEmpty.json?.screenshots),
+  typeof shotsEmpty.json?.screenshots,
+)
+
+const shotsTooMany = await api('PUT', `/admin/projects/${portfolio.id}/screenshots`,
+  Array.from({ length: 11 }, (_, i) => ({ url: `${shotBase}-${i}.png` })))
+check('截图 11 张 → 400 VALIDATION_ERROR（整批拒绝）',
+  shotsTooMany.status === 400 && shotsTooMany.json?.error?.code === 'VALIDATION_ERROR',
+  [shotsTooMany.status, shotsTooMany.json?.error?.code],
+)
+
+const shotsBadUrl = await api('PUT', `/admin/projects/${portfolio.id}/screenshots`, [{ url: 'https://' }])
+check('截图 url 过不了「带 host 的绝对地址」→ 400（不是静默入库）',
+  shotsBadUrl.status === 400 && shotsBadUrl.json?.error?.code === 'VALIDATION_ERROR',
+  [shotsBadUrl.status, shotsBadUrl.json?.error?.code],
+)
+
+/**
+ * 契约 §4.1：两个「整体替换」端点（metadata / screenshots）的请求体都是**裸数组**。
+ *
+ * 这一对反例行是补盲区用的：契约表长期只覆盖「返回体形状」，于是前端发 `{ items: [...] }`
+ * 时两侧一起错（mock 是手写副本），277 条用例 + 97 行比对全绿而真后端一律 400。
+ * 请求体形状从此也进表。
+ */
+const shotsWrapped = await api('PUT', `/admin/projects/${portfolio.id}/screenshots`, {
+  items: [{ url: `${shotBase}-wrapped.png` }],
+})
+check('PUT /screenshots 请求体必须是裸数组（发 { items } → 400）',
+  shotsWrapped.status === 400 && shotsWrapped.json?.error?.code === 'VALIDATION_ERROR',
+  [shotsWrapped.status, shotsWrapped.json?.error?.code],
+)
+
+// 契约 §4.1：body 是裸数组（曾是 { items: [...] }，真后端一律 400 —— 这一行就是证据）
+const metricPut = await api('PUT', `/admin/projects/${portfolio.id}/metadata`, [
+  { key_label: 'gzip 包体', value: '42 KB', kind: 'metric' },
+  { key_label: '部署平台', value: 'Vercel' },
+])
+const metricRows = metricPut.json?.metadata ?? []
+const metaWrapped = await api('PUT', `/admin/projects/${portfolio.id}/metadata`, {
+  items: [{ key_label: '部署平台', value: 'Vercel' }],
+})
+check('PUT /metadata 请求体必须是裸数组（发 { items } → 400）',
+  metaWrapped.status === 400 && metaWrapped.json?.error?.code === 'VALIDATION_ERROR',
+  [metaWrapped.status, metaWrapped.json?.error?.code],
+)
+check('元数据条目带 kind，缺省为 meta',
+  metricRows.map((m) => m.kind).join(',') === 'metric,meta',
+  metricRows.map((m) => m.kind),
+)
+/**
+ * 契约 §4.1.1：公开详情、后台详情、元数据写响应三条路径都要带 `kind`。
+ * 只验写响应会漏掉公开读侧——前端渲染指标格读的正是公开详情。
+ */
+const publicDetail = await api('GET', `/projects/${slugOf('portfolio')}`)
+check('公开详情 metadata[] 也带 kind',
+  (publicDetail.json?.metadata ?? []).every((m) => m.kind === 'meta' || m.kind === 'metric'),
+  (publicDetail.json?.metadata ?? []).map((m) => m.kind),
+)
+
+const metricTooMany = await api('PUT', `/admin/projects/${portfolio.id}/metadata`, [
+  { key_label: 'a', value: '1', kind: 'metric' },
+  { key_label: 'b', value: '2', kind: 'metric' },
+  { key_label: 'c', value: '3', kind: 'metric' },
+])
+check('metric 第 3 条 → 400（整批拒绝，不静默截断）',
+  metricTooMany.status === 400 && metricTooMany.json?.error?.code === 'VALIDATION_ERROR',
+  [metricTooMany.status, metricTooMany.json?.error?.code],
+)
+
 // ---------------------------------------------------------------- 笔记
 section('笔记（N:1）/ 摘要字段 / 可见性 / 301')
 
@@ -723,21 +864,37 @@ async function runMockSide() {
 
 if (!isMain) {
   // 被 `src/mocks/contract-bridge.spec.ts` import 时只导出 runPlan，不触发 CLI
-} else if (SOURCE === 'real' || SOURCE === 'both') {
-  const realRows = await runPlan({ transport: realTransport })
-  const realSummary = printSummary(realRows)
-  if (SOURCE === 'both') {
-    const mockRows = await runMockSide()
-    if (!mockRows) process.exit(2)
-    const diverged = diffRows(realRows, mockRows)
-    process.exit(realSummary.code || diverged.length ? 1 : 0)
-  }
-  process.exit(realSummary.code)
 } else if (SOURCE === 'mock') {
   const mockRows = await runMockSide()
   if (!mockRows) process.exit(2)
   process.exit(printSummary(mockRows).code)
 } else {
-  console.error(`未知 --source=${SOURCE}（可选 real / mock / both）`)
-  process.exit(2)
+  // 收尾清场与开头同源：/ 自己建的 RUN- 项目自己收，异常路径也走 finally。
+  let exitCode = 0
+  try {
+    const realRows = await runPlan({ transport: realTransport })
+    const realSummary = printSummary(realRows)
+    if (SOURCE === 'both') {
+      const mockRows = await runMockSide()
+      if (!mockRows) {
+        exitCode = 2
+      } else {
+        const diverged = diffRows(realRows, mockRows)
+        exitCode = realSummary.code || diverged.length ? 1 : 0
+      }
+    } else if (SOURCE === 'real') {
+      exitCode = realSummary.code
+    } else {
+      console.error(`未知 --source=${SOURCE}（可选 real / mock / both）`)
+      exitCode = 2
+    }
+  } finally {
+    try {
+      await cleanupRunProjects()
+    } catch (err) {
+      console.error(`  ⚠ 收尾清场失败：${err instanceof Error ? err.message : String(err)}`)
+      if (exitCode === 0) exitCode = 1
+    }
+  }
+  process.exit(exitCode)
 }

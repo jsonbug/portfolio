@@ -13,6 +13,7 @@ import type {
   ErrorEnvelope,
   LinkCreate,
   LinkUpdate,
+  MetadataKind,
   NoteCreate,
   NoteUpdate,
   ProjectCreate,
@@ -41,11 +42,13 @@ import {
   checkLinkNow,
   removeNote,
   replaceProjectMetadata,
+  replaceProjectScreenshots,
   restoreProject,
   softDeleteProject,
   toAdminNoteDetail,
   toAdminProjectDetail,
   toNoteDetail,
+  touchProject,
   toProjectDetail,
   uid,
   updateNote,
@@ -53,6 +56,17 @@ import {
   type DbState,
 } from './db'
 import { MAX_SEARCH_LENGTH } from '@/utils/text'
+import {
+  META_KEY_LABEL_MAX,
+  METADATA_MAX,
+  METRIC_KEY_LABEL_MAX,
+  METRIC_LIMITS,
+  METRIC_VALUE_MAX,
+  META_VALUE_MAX,
+  SCREENSHOT_CAPTION_MAX,
+  SCREENSHOT_MAX,
+  SCREENSHOT_URL_MAX,
+} from '@/constants/limits'
 
 let state: DbState = createDbState()
 
@@ -243,27 +257,105 @@ function validateLinkInput(input: unknown, partial = false): ErrorDetail[] {
 }
 
 function validateMetadataInput(input: unknown): ErrorDetail[] {
-  const body = (input ?? {}) as Record<string, unknown>
-  const items = body.items
+  // 契约 §4.1：body 是裸数组（与 /screenshots 同语义），不是 { items }。
+  const items = input
   if (!Array.isArray(items)) {
-    return [{ field: 'items', code: 'required', message: 'items 必须为数组' }]
+    return [{ field: 'body', code: 'required', message: '元数据请求体必须是数组' }]
   }
-  if (items.length > 50) {
-    return [{ field: 'items', code: 'too_big', message: '自定义元数据最多 50 条' }]
+  if (items.length > METADATA_MAX) {
+    return [{ field: 'items', code: 'too_big', message: `自定义元数据最多 ${METADATA_MAX} 条` }]
   }
   const details: ErrorDetail[] = []
   const seen = new Set<string>()
+  let metrics = 0
   items.forEach((item, index) => {
     const row = (item ?? {}) as Record<string, unknown>
     const key = typeof row.key_label === 'string' ? row.key_label.trim() : ''
-    if (!key || key.length > 50) {
-      details.push({ field: `items[${index}].key_label`, code: 'length', message: '键名必填且 ≤50 字符' })
+    const kind = row.kind ?? 'meta'
+    const isMetric = kind === 'metric'
+    const keyMax = isMetric ? METRIC_KEY_LABEL_MAX : META_KEY_LABEL_MAX
+    const valueMax = isMetric ? METRIC_VALUE_MAX : META_VALUE_MAX
+    if (isMetric) metrics += 1
+    if (kind !== 'meta' && !isMetric) {
+      details.push({ field: `items[${index}].kind`, code: 'invalid', message: 'kind 须为 meta/metric' })
+    }
+    if (!key || key.length > keyMax) {
+      details.push({
+        field: `items[${index}].key_label`,
+        code: 'length',
+        message: isMetric ? `指标卡标签必填且 ≤${keyMax} 字符` : `键名必填且 ≤${keyMax} 字符`,
+      })
     } else if (seen.has(key)) {
       details.push({ field: `items[${index}].key_label`, code: 'duplicate', message: `键名重复：${key}` })
     }
     seen.add(key)
-    if (typeof row.value !== 'string' || row.value.length > 500) {
-      details.push({ field: `items[${index}].value`, code: 'length', message: '值必填且 ≤500 字符' })
+    if (typeof row.value !== 'string' || row.value.length > valueMax) {
+      details.push({
+        field: `items[${index}].value`,
+        code: 'length',
+        message: isMetric ? `指标卡数值必填且 ≤${valueMax} 字符` : `值必填且 ≤${valueMax} 字符`,
+      })
+    }
+  })
+  if (metrics > METRIC_LIMITS.max) {
+    details.push({
+      field: 'items',
+      code: 'too_big',
+      message: `指标卡条目最多 ${METRIC_LIMITS.max} 条（当前 ${metrics}）`,
+    })
+  }
+  return details
+}
+
+/**
+ * 截图整体替换校验（契约 4.1.1）：body 是**裸数组**。
+ * `url` 除前缀外还要真的能 `new URL()` 解出 http(s) 主机——`https://` 这种
+ * 过得了前缀却会入库失败的值必须 400，否则前台 `<img>` 静默空白。
+ */
+function validateScreenshotsInput(input: unknown): ErrorDetail[] {
+  if (!Array.isArray(input)) {
+    return [{ field: 'body', code: 'required', message: '截图请求体必须是数组' }]
+  }
+  if (input.length > SCREENSHOT_MAX) {
+    return [{ field: 'body', code: 'too_big', message: `每个项目最多 ${SCREENSHOT_MAX} 张截图` }]
+  }
+  const details: ErrorDetail[] = []
+  input.forEach((raw, index) => {
+    const row = (raw ?? {}) as Record<string, unknown>
+    const url = typeof row.url === 'string' ? row.url.trim() : ''
+    if (!url) {
+      details.push({ field: `[${index}].url`, code: 'required', message: '截图地址必填' })
+    } else if (url.length > SCREENSHOT_URL_MAX) {
+      details.push({ field: `[${index}].url`, code: 'length', message: `地址 ≤${SCREENSHOT_URL_MAX} 字符` })
+    } else if (/\s/.test(url)) {
+      details.push({ field: `[${index}].url`, code: 'invalid', message: '地址里不能有空白字符' })
+    } else {
+      let parsed: URL | null = null
+      try {
+        parsed = new URL(url)
+      } catch {
+        parsed = null
+      }
+      if (!parsed) {
+        details.push({
+          field: `[${index}].url`,
+          code: 'invalid',
+          message: '必须是合法的 http(s) 绝对地址（例如 https://cdn.example.com/shot.png）',
+        })
+      } else if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        details.push({ field: `[${index}].url`, code: 'invalid', message: '必须是 http(s) 地址' })
+      } else if (!parsed.hostname) {
+        details.push({ field: `[${index}].url`, code: 'invalid', message: '地址缺少主机名' })
+      }
+    }
+    if (row.caption !== undefined && row.caption !== null) {
+      if (typeof row.caption !== 'string' || row.caption.trim().length > SCREENSHOT_CAPTION_MAX) {
+        details.push({
+          field: `[${index}].caption`,
+          code: 'length',
+          message: `图注 ≤${SCREENSHOT_CAPTION_MAX} 字`,
+        })
+      }
     }
   })
   return details
@@ -450,8 +542,25 @@ function handleAdmin(req: MockRequest): Response {
     replaceProjectMetadata(
       state,
       project.id,
-      (body as { items: Array<{ key_label: string; value: string }> }).items,
+      body as Array<{ key_label: string; value: string; kind?: MetadataKind }>,
     )
+    // 契约 4.1.1 副作用：任一次成功替换都 bump updated_at
+    touchProject(project)
+    return ok(toAdminProjectDetail(state, project))
+  }
+
+  const screenshotsOp = matchRoute('/admin/projects/:id/screenshots', path)
+  if (screenshotsOp && method === 'PUT') {
+    const project = state.projects.find((p) => p.id === screenshotsOp.id)
+    if (!project) return notFound('项目')
+    const details = validateScreenshotsInput(body)
+    if (details.length) return errorResponse(400, 'VALIDATION_ERROR', '请求参数校验失败', details)
+    replaceProjectScreenshots(
+      state,
+      project.id,
+      body as Array<{ url: string; caption?: string | null; sort?: number }>,
+    )
+    touchProject(project)
     return ok(toAdminProjectDetail(state, project))
   }
 

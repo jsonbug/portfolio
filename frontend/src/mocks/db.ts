@@ -24,6 +24,7 @@ import type {
   LinkType,
   ListEnvelope,
   MetadataItem,
+  MetadataKind,
   NoteDetail,
   NotePublishStatus,
   NoteSummary,
@@ -33,6 +34,7 @@ import type {
   ProjectListEnvelope,
   ProjectSort,
   PublishStatus,
+  Screenshot,
 } from '@/types'
 import { MAX_SEARCH_LENGTH } from '@/utils/text'
 
@@ -87,6 +89,15 @@ export interface DbMetadata {
   project_id: string
   key_label: string
   value: string
+  kind: MetadataKind
+  sort: number
+}
+
+export interface DbScreenshot {
+  id: string
+  project_id: string
+  url: string
+  caption: string | null
   sort: number
 }
 
@@ -115,6 +126,7 @@ export interface DbState {
   projects: DbProject[]
   links: DbLink[]
   metadata: DbMetadata[]
+  screenshots: DbScreenshot[]
   notes: DbNote[]
   aliases: DbSlugAlias[]
   /** 种子数据的「现在」，写入操作的时间基准（测试可注入固定值）。 */
@@ -320,9 +332,27 @@ export function createDbState(now = Date.now()): DbState {
   ]
 
   const metadata: DbMetadata[] = [
-    { id: uid('meta'), project_id: SEED_IDS.portfolio, key_label: '代码行数', value: '18k', sort: 0 },
-    { id: uid('meta'), project_id: SEED_IDS.portfolio, key_label: '测试用例', value: '76', sort: 1 },
-    { id: uid('meta'), project_id: SEED_IDS.chart, key_label: '包体', value: '28KB', sort: 0 },
+    { id: uid('meta'), project_id: SEED_IDS.portfolio, key_label: '代码行数', value: '18k', kind: 'meta', sort: 0 },
+    { id: uid('meta'), project_id: SEED_IDS.portfolio, key_label: '测试用例', value: '76', kind: 'meta', sort: 1 },
+    // 指标卡（kind = metric）：详情页左栏的统计格，与右栏元数据 panel 是两回事
+    { id: uid('meta'), project_id: SEED_IDS.portfolio, key_label: 'gzip 包体', value: '42 KB', kind: 'metric', sort: 2 },
+    { id: uid('meta'), project_id: SEED_IDS.portfolio, key_label: '长音频渲染', value: '60 fps', kind: 'metric', sort: 3 },
+    { id: uid('meta'), project_id: SEED_IDS.chart, key_label: '包体', value: '28KB', kind: 'meta', sort: 0 },
+    { id: uid('meta'), project_id: SEED_IDS.chart, key_label: '长音频渲染', value: '60 fps', kind: 'metric', sort: 1 },
+  ]
+
+  const screenshot = (
+    projectId: string,
+    url: string,
+    caption: string | null,
+    sort: number,
+  ): DbScreenshot => ({ id: uid('shot'), project_id: projectId, url, caption, sort })
+
+  // 多图（验证 n/N 与左右箭头）、单图（验证按钮边界）、零图（验证整块不渲染）
+  const screenshots: DbScreenshot[] = [
+    screenshot(SEED_IDS.portfolio, 'https://cdn.example.com/portfolio-1.webp', '项目列表：分段与筛选条', 0),
+    screenshot(SEED_IDS.portfolio, 'https://cdn.example.com/portfolio-2.webp', null, 1),
+    screenshot(SEED_IDS.chart, 'https://cdn.example.com/chart-1.webp', '折线图渲染（v0.9）', 0),
   ]
 
   const note = (
@@ -360,7 +390,18 @@ export function createDbState(now = Date.now()): DbState {
       SEED_IDS.portfolio,
       'v1-2-notes',
       'v1.2 改造笔记',
-      '曝光状态与进展拆成两个字段，前台分段因此只依赖 `progress`。',
+      [
+        '曝光状态与进展拆成两个字段，前台分段因此只依赖 `progress`。',
+        '',
+        '## 为什么拆',
+        '',
+        '`publish_status` 决定「谁看得见」，`progress` 决定「做到哪一步」，此前一个字段两头兼顾。',
+        '',
+        '## 影响面',
+        '',
+        '- 前台分段只读 `progress`，`archived` 不出现在分段里',
+        '- 后台列表两个维度各自成列',
+      ].join('\n'),
       'published',
       ['决策'],
       3,
@@ -402,7 +443,7 @@ export function createDbState(now = Date.now()): DbState {
     },
   ]
 
-  return { projects, links, metadata, notes, aliases, now }
+  return { projects, links, metadata, screenshots, notes, aliases, now }
 }
 
 // ---------------------------------------------------------------- 序列化
@@ -523,7 +564,14 @@ function metadataOf(state: DbState, projectId: string): MetadataItem[] {
   return state.metadata
     .filter((m) => m.project_id === projectId)
     .sort((a, b) => a.sort - b.sort)
-    .map((m) => ({ key_label: m.key_label, value: m.value, sort: m.sort }))
+    .map((m) => ({ key_label: m.key_label, value: m.value, kind: m.kind, sort: m.sort }))
+}
+
+export function screenshotsOf(state: DbState, projectId: string): Screenshot[] {
+  return state.screenshots
+    .filter((s) => s.project_id === projectId)
+    .sort((a, b) => a.sort - b.sort)
+    .map((s) => ({ id: s.id, url: s.url, caption: s.caption, sort: s.sort }))
 }
 
 export function toProjectDetail(
@@ -543,6 +591,7 @@ export function toProjectDetail(
     start_year: p.start_year,
     team_size: p.team_size,
     metadata: metadataOf(state, p.id),
+    screenshots: screenshotsOf(state, p.id),
     notes,
   }
 }
@@ -553,6 +602,8 @@ export function toAdminProjectListItem(state: DbState, p: DbProject): AdminProje
     publish_status: p.publish_status,
     published_at: p.published_at,
     deleted_at: p.deleted_at,
+    // 口径与真后端一致：该项目全部笔记（草稿 + 已发布），与过滤条件无关。
+    note_count: state.notes.filter((note) => note.project_id === p.id).length,
   }
 }
 
@@ -877,7 +928,7 @@ export function updateProject(
 export function replaceProjectMetadata(
   state: DbState,
   projectId: string,
-  items: Array<{ key_label: string; value: string }>,
+  items: Array<{ key_label: string; value: string; kind?: MetadataKind }>,
 ): void {
   state.metadata = state.metadata.filter((m) => m.project_id !== projectId)
   items.forEach((item, index) => {
@@ -886,9 +937,43 @@ export function replaceProjectMetadata(
       project_id: projectId,
       key_label: item.key_label,
       value: item.value,
+      // 契约 4.1.1：缺省 meta，旧请求体不带 kind 也照样通过
+      kind: item.kind ?? 'meta',
       sort: index,
     })
   })
+}
+
+/** 整体替换截图（先删后建），`sort` 缺省按数组下标；`[]` 即清空。 */
+export function replaceProjectScreenshots(
+  state: DbState,
+  projectId: string,
+  items: Array<{ url: string; caption?: string | null; sort?: number }>,
+): void {
+  state.screenshots = state.screenshots.filter((s) => s.project_id !== projectId)
+  items.forEach((item, index) => {
+    const caption = item.caption?.trim() ? item.caption.trim() : null
+    state.screenshots.push({
+      id: uid('shot'),
+      project_id: projectId,
+      url: item.url,
+      caption,
+      sort: item.sort ?? index,
+    })
+  })
+}
+
+/**
+ * 详情页内容（元数据 / 截图）改动后 bump 项目 `updated_at`（契约 4.1.1 副作用）。
+ *
+ * `Math.max` 是为了保证时间戳**严格变大**：种子数据的时间基准与测试里的 `Date.now()`
+ * 可能落在同一毫秒，直接赋值会让「保存即更新」在断言里看起来没生效。
+ */
+export function touchProject(project: DbProject, now = Date.now()): DbProject {
+  const previous = Date.parse(project.updated_at)
+  const next = Number.isNaN(previous) ? now : Math.max(now, previous + 1000)
+  project.updated_at = iso(next)
+  return project
 }
 
 export function softDeleteProject(state: DbState, project: DbProject, now = state.now): DbProject {

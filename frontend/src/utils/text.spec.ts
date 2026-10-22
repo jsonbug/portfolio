@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_SEARCH_LENGTH, clampSearch, daysAgo, formatDate, readingTimeMinutes, truncate } from './text'
+import {
+  MAX_SEARCH_LENGTH,
+  clampSearch,
+  daysAgo,
+  formatDate,
+  formatRelativeDay,
+  formatShortDate,
+  readingTimeMinutes,
+  truncate,
+} from './text'
 
 describe('truncate', () => {
   it('原样返回不超过最大长度的文本', () => {
@@ -71,5 +80,40 @@ describe('clampSearch', () => {
   it('null / undefined 归一为空串', () => {
     expect(clampSearch(null)).toBe('')
     expect(clampSearch(undefined)).toBe('')
+  })
+
+  describe('formatShortDate', () => {
+    const now = Date.UTC(2026, 9, 18, 12)
+
+    it('今天 / 昨天用词，其余 MM-DD', () => {
+      expect(formatShortDate('2026-10-18T03:00:00.000Z', now)).toBe('今天')
+      expect(formatShortDate('2026-10-17T03:00:00.000Z', now)).toBe('昨天')
+      expect(formatShortDate('2026-10-15T03:00:00.000Z', now)).toBe('10-15')
+      expect(formatShortDate('2026-09-30T03:00:00.000Z', now)).toBe('09-30')
+    })
+
+    it('空值与非法值返回空串', () => {
+      expect(formatShortDate(null, now)).toBe('')
+      expect(formatShortDate('not-a-date', now)).toBe('')
+    })
+  })
+})
+
+describe('formatRelativeDay（走查 #4：卡片底栏相对时间）', () => {
+  const now = Date.parse('2026-10-21T12:00:00.000Z')
+
+  it('今天 / 昨天 / N 天前', () => {
+    expect(formatRelativeDay('2026-10-21T09:00:00.000Z', now)).toBe('今天')
+    expect(formatRelativeDay('2026-10-20T09:00:00.000Z', now)).toBe('昨天')
+    expect(formatRelativeDay('2026-10-18T09:00:00.000Z', now)).toBe('3 天前')
+  })
+
+  it('超过 30 天回到 MM-DD（「87 天前」不如日期好读）', () => {
+    expect(formatRelativeDay('2026-08-01T09:00:00.000Z', now)).toBe('08-01')
+  })
+
+  it('空值与非法值返回空串', () => {
+    expect(formatRelativeDay(null, now)).toBe('')
+    expect(formatRelativeDay('not-a-date', now)).toBe('')
   })
 })

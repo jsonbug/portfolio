@@ -3,36 +3,51 @@ import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import ProgressBadge from './ProgressBadge.vue'
 import ProjectCover from './ProjectCover.vue'
+import LinkTypeIcon from './LinkTypeIcon.vue'
 import { safeHttpUrl } from '@/utils/link'
-import { formatDate } from '@/utils/text'
-import type { ProjectListItem } from '@/types'
+import { formatRelativeDay } from '@/utils/text'
+import { LINK_TYPE_LABELS, type Link, type ProjectListItem } from '@/types'
 
 /**
- * 前台项目卡片：封面 + 名称 + 进展徽标 + 摘要（2 行截断）+ 技术栈 + 指标 + 仓库/官网双入口。
+ * 前台项目卡片（设计稿 01/10）：封面 + 名称 + 进展徽标 + 摘要（2 行截断）+ 技术栈，
+ * 底栏 1px 分隔线之下是「★ N · 相对时间」与两个图标入口（仓库 / 官网）。
  * 卡片主体是一个链接（详情页），外部入口放在主体之外，避免嵌套可交互元素。
  */
 const props = defineProps<{ item: ProjectListItem }>()
 
-const repoLink = computed(() => {
-  const link = props.item.links.find((item) => item.type === 'repo')
+function pickLink(type: Link['type']): { link: Link; url: string } | null {
+  const link = props.item.links.find((candidate) => candidate.type === type)
   const url = safeHttpUrl(link?.url)
-  return link && url ? { ...link, url } : null
-})
-const siteLink = computed(() => {
-  const link = props.item.links.find((item) => item.type === 'site')
-  const url = safeHttpUrl(link?.url)
-  return link && url ? { ...link, url } : null
-})
+  return link && url ? { link, url } : null
+}
+
+const repoLink = computed(() => pickLink('repo'))
+const siteLink = computed(() => pickLink('site'))
 /** 卡片标题的 id 供卡片链接用 aria-labelledby 指过来（摘要仍留在可访问名里）。 */
 const titleId = computed(() => `project-card-title-${props.item.id}`)
 /** F9：只有 failed 才降级展示（低对比 + 失效图标 + 说明），ok / unknown / null 一律同款。 */
-function isFailed(link: { last_status: string } | null): boolean {
+function isFailed(link: Link | null): boolean {
   return link?.last_status === 'failed'
 }
 
 /** 手填的 last_updated_at 优先，没有则退回记录更新时间。 */
 const updatedAt = computed(() => props.item.last_updated_at ?? props.item.updated_at)
-const updatedText = computed(() => formatDate(updatedAt.value))
+const updatedText = computed(() => formatRelativeDay(updatedAt.value))
+const metaText = computed(() => {
+  const parts: string[] = []
+  if (props.item.stars != null) parts.push(`★ ${props.item.stars}`)
+  if (updatedText.value) parts.push(updatedText.value)
+  return parts.join(' · ')
+})
+
+const entries = computed(() =>
+  [
+    { key: 'repo' as const, value: repoLink.value },
+    { key: 'site' as const, value: siteLink.value },
+  ].filter((entry): entry is { key: 'repo' | 'site'; value: { link: Link; url: string } } =>
+    Boolean(entry.value),
+  ),
+)
 </script>
 
 <template>
@@ -52,48 +67,31 @@ const updatedText = computed(() => formatDate(updatedAt.value))
         <ul v-if="item.tech_stack.length" class="card-tags">
           <li v-for="tech in item.tech_stack" :key="tech" class="tag">{{ tech }}</li>
         </ul>
-        <p class="card-meta tabular-nums">
-          <span v-if="item.stars != null" class="card-stars">★ {{ item.stars }}</span>
-          <span v-if="updatedText" class="card-updated">{{ updatedText }} 更新</span>
-        </p>
       </div>
     </RouterLink>
 
-    <div v-if="repoLink || siteLink" class="card-links">
-      <a
-        v-if="repoLink"
-        class="card-link"
-        :class="{ 'card-link--failed': isFailed(repoLink) }"
-        :href="repoLink.url"
-        target="_blank"
-        rel="noopener noreferrer"
-        :title="isFailed(repoLink) ? '链接检查失败，仍可尝试打开' : undefined"
-        :aria-label="
-          isFailed(repoLink) ? `仓库 · ${item.name}（新窗口打开，链接检查失败）` : `仓库 · ${item.name}（新窗口打开）`
-        "
-        ><span v-if="isFailed(repoLink)" class="card-link-mark" aria-hidden="true">⚠</span>仓库<span
-          class="card-link-mark"
-          aria-hidden="true"
-          >↗</span
-        ></a
-      >
-      <a
-        v-if="siteLink"
-        class="card-link"
-        :class="{ 'card-link--failed': isFailed(siteLink) }"
-        :href="siteLink.url"
-        target="_blank"
-        rel="noopener noreferrer"
-        :title="isFailed(siteLink) ? '链接检查失败，仍可尝试打开' : undefined"
-        :aria-label="
-          isFailed(siteLink) ? `官网 · ${item.name}（新窗口打开，链接检查失败）` : `官网 · ${item.name}（新窗口打开）`
-        "
-        ><span v-if="isFailed(siteLink)" class="card-link-mark" aria-hidden="true">⚠</span>官网<span
-          class="card-link-mark"
-          aria-hidden="true"
-          >↗</span
-        ></a
-      >
+    <div class="card-foot">
+      <p class="card-meta tabular-nums">{{ metaText }}</p>
+      <div v-if="entries.length" class="card-links">
+        <a
+          v-for="entry in entries"
+          :key="entry.key"
+          class="card-icon-btn"
+          :class="{ 'card-icon-btn--failed': isFailed(entry.value.link) }"
+          :href="entry.value.url"
+          target="_blank"
+          rel="noopener noreferrer"
+          :title="isFailed(entry.value.link) ? '链接检查失败，仍可尝试打开' : LINK_TYPE_LABELS[entry.key]"
+          :aria-label="
+            isFailed(entry.value.link)
+              ? `${LINK_TYPE_LABELS[entry.key]} · ${item.name}（新窗口打开，链接检查失败）`
+              : `${LINK_TYPE_LABELS[entry.key]} · ${item.name}（新窗口打开）`
+          "
+        >
+          <LinkTypeIcon :type="entry.key" />
+          <span v-if="isFailed(entry.value.link)" class="card-icon-mark" aria-hidden="true">⚠</span>
+        </a>
+      </div>
     </div>
   </article>
 </template>
@@ -102,13 +100,26 @@ const updatedText = computed(() => formatDate(updatedAt.value))
 .project-card {
   display: flex;
   flex-direction: column;
+  /* 同一行卡片等高：摘要有无都不该让底栏错位 */
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   transition:
-    box-shadow 0.15s,
-    transform 0.15s;
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
 }
+/* 走查 #28：悬停 e1 → e2 且上移 2px（只换阴影像「没反应」） */
 .project-card:hover {
   box-shadow: var(--shadow-e2);
+  transform: translateY(-2px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .project-card {
+    transition: none;
+  }
+  .project-card:hover {
+    transform: none;
+  }
 }
 .card-hit {
   display: block;
@@ -127,7 +138,8 @@ const updatedText = computed(() => formatDate(updatedAt.value))
   display: flex;
   flex-direction: column;
   gap: var(--space-8);
-  padding: var(--space-16) var(--space-16) var(--space-12);
+  /* 走查 #27：16 18 14 */
+  padding: 16px 18px 14px;
 }
 .card-head {
   display: flex;
@@ -158,57 +170,80 @@ const updatedText = computed(() => formatDate(updatedAt.value))
 .card-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-4);
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
+/* 走查 #27：标签高 26、gap 6、等宽 11.5 */
 .tag {
-  padding: 2px var(--space-8);
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
   border-radius: var(--r-tag);
   background: var(--c-fill);
-  color: var(--c-text-secondary);
-  font-size: var(--fs-mono);
-  line-height: var(--lh-mono);
+  color: var(--c-text);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1;
+}
+.card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  padding: 10px 18px;
+  border-top: 1px solid var(--c-border);
 }
 .card-meta {
-  display: flex;
-  gap: var(--space-8);
   margin: 0;
+  font-family: var(--font-mono);
   font-size: var(--fs-mono);
   line-height: var(--lh-mono);
   color: var(--c-text-secondary);
 }
 .card-links {
   display: flex;
-  gap: var(--space-8);
-  padding: 0 var(--space-16) var(--space-12);
+  gap: var(--space-4);
 }
-.card-link {
+/* 视觉 28px、热区 40px（走查 #4） */
+.card-icon-btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-4);
-  min-height: 32px;
-  padding: 0 var(--space-8);
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin: -6px -4px -6px 0;
+  border-radius: var(--r-control);
+  color: var(--c-text);
+}
+.card-icon-btn::before {
+  content: '';
+  position: absolute;
+  width: 28px;
+  height: 28px;
   border: 1px solid var(--c-border);
   border-radius: var(--r-control);
-  font-size: var(--fs-mono);
-  color: var(--c-text);
-  text-decoration: none;
+  transition: background-color 0.15s ease;
 }
-.card-link:hover {
-  border-color: var(--c-control-border);
+.card-icon-btn:hover::before {
   background: var(--c-fill);
-  text-decoration: none;
+  border-color: var(--c-control-border);
 }
-.card-link-mark {
+.card-icon-btn:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: -6px;
+}
+.card-icon-btn--failed {
   color: var(--c-text-secondary);
 }
-/* F9：failed 才降级（低对比），仍可点 */
-.card-link--failed {
-  color: var(--c-text-secondary);
-}
-.card-link--failed:hover {
-  color: var(--c-text);
+.card-icon-mark {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-size: 9px;
+  line-height: 1;
 }
 </style>

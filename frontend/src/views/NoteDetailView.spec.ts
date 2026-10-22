@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { listPublicNotes } from '@/api/notes'
@@ -35,6 +35,46 @@ const admin = (method: string, path: string, body?: unknown) =>
     body,
   })
 
+describe('NoteDetailView 三栏（09/10 稿）', () => {
+  beforeEach(() => resetMockDb())
+
+  it('左栏是笔记树：搜索框 + 按项目分组 + 当前篇白卡', async () => {
+    await renderNote('why-mock-first')
+
+    const tree = await screen.findByRole('complementary', { name: '笔记树' })
+    expect(within(tree).getByRole('searchbox', { name: '搜索笔记' })).toBeInTheDocument()
+    const list = within(tree).getByRole('navigation', { name: '笔记列表' })
+    // 按项目分组：分组标题是项目名
+    expect(await within(list).findByRole('heading', { name: '项目展示平台' })).toBeInTheDocument()
+    const current = await within(list).findByRole('button', { name: /为什么先做 mock-first 联调/ })
+    expect(current).toHaveAttribute('aria-current', 'true')
+    expect(current).toHaveClass('note-link--active')
+  })
+
+  it('右栏同时放「本页目录」与「所属项目」（目录不再在左栏）', async () => {
+    await renderNote('v1-2-notes')
+
+    const right = await screen.findByRole('complementary', { name: '', hidden: false }).catch(() => null)
+    void right
+    const toc = await screen.findByRole('region', { name: '本页目录' })
+    const project = await screen.findByRole('region', { name: '所属项目' })
+    // 同一列（祖先 aside 相同），且不在「笔记树」里
+    expect(toc.closest('aside')).toBe(project.closest('aside'))
+    expect(toc.closest('aside')?.getAttribute('aria-label')).not.toBe('笔记树')
+  })
+
+  it('点树里的另一篇会切到对应路由', async () => {
+    const router = await renderNote('why-mock-first')
+    const tree = await screen.findByRole('complementary', { name: '笔记树' })
+    const other = await within(tree).findByRole('button', { name: /v1.2 改造笔记/ })
+
+    await fireEvent.click(other)
+
+    await waitFor(() => expect(router.currentRoute.value.params.slug).toBe('v1-2-notes'))
+    expect(router.currentRoute.value.name).toBe('note-detail')
+  })
+})
+
 describe('NoteDetailView', () => {
   beforeEach(() => resetMockDb())
 
@@ -60,7 +100,7 @@ describe('NoteDetailView', () => {
 
     await renderNote('toc-demo')
 
-    const toc = await screen.findByRole('region', { name: '目录' })
+    const toc = await screen.findByRole('region', { name: '本页目录' })
     const links = within(toc).getAllByRole('link')
     expect(links.map((a) => a.textContent)).toEqual(['背景', '细节'])
     // 锚点指向正文里真实存在的标题
@@ -131,6 +171,43 @@ describe('NoteDetailView · 门槛与 a11y', () => {
     const hint = await screen.findByText(/这篇笔记较早，未在最近 100 篇内/)
     expect(hint).toBeInTheDocument()
     expect(within(hint).getByRole('link', { name: '回笔记列表' })).toHaveAttribute('href', '/notes')
+  })
+
+  it('目录当前项跟着滚动走：滚过第二条标题后它成为 aria-current', async () => {
+    admin('POST', '/admin/notes', {
+      project_id: 'proj_portfolio',
+      slug: 'toc-scroll',
+      title: '带两节的笔记',
+      body_md: '## 第一节\n\n内容。\n\n## 第二节\n\n更多内容。\n',
+      publish_status: 'published',
+    })
+    await renderNote('toc-scroll')
+
+    const toc = await screen.findByRole('region', { name: '本页目录' })
+    await waitFor(() => expect(within(toc).getAllByRole('link')).toHaveLength(2))
+    const links = within(toc).getAllByRole('link')
+
+    // jsdom 不会真的滚动：直接改每个标题的 top，模拟「第二条已滚过顶部」
+    const headings = Array.from(
+      document.querySelectorAll<HTMLElement>('.markdown h2, .markdown h3'),
+    )
+    headings.forEach((heading, i) => {
+      heading.getBoundingClientRect = () => ({ top: i === 0 ? -200 : 40 }) as DOMRect
+    })
+    window.dispatchEvent(new Event('scroll'))
+
+    await waitFor(() => expect(links[links.length - 1]).toHaveAttribute('aria-current', 'location'))
+    expect(links[0]).not.toHaveAttribute('aria-current')
+  })
+
+  it('所属项目卡补上项目摘要与进展徽标（✓ 已上线）', async () => {
+    await renderNote('chart-kit-0-9')
+
+    const panel = await screen.findByRole('region', { name: '所属项目' })
+    const card = within(panel).getByRole('link')
+    // 摘要来自再取一次项目详情；chart-kit 是已上线，所以徽标是 check 形态
+    await waitFor(() => expect(card).toHaveTextContent('声明式图表库'))
+    expect(within(card).getByText('已上线')).toBeInTheDocument()
   })
 
   it('正文标题可聚焦、目录锚点目标带 tabindex，切换后有 aria-live 播报区', async () => {

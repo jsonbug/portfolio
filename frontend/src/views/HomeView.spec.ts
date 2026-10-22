@@ -58,6 +58,19 @@ describe('HomeView 列表', () => {
     expect(screen.getByText(/最近更新 \d+ 天前|今天更新/)).toBeInTheDocument()
   })
 
+  it('英雄区三格是「全部项目 / 已上线 / 笔记」——不放「进行中」（分段里已有）', async () => {
+    await renderHome()
+    await waitForList()
+
+    const stats = document.querySelectorAll('.home-stat')
+    expect(Array.from(stats).map((el) => el.textContent?.trim())).toEqual([
+      // 种子：3 个可见项目（2 进行中 1 已上线）、3 篇公开笔记（草稿与归档项目下的不算）
+      '全部项目3',
+      '已上线1',
+      '笔记3',
+    ])
+  })
+
   it('首屏先渲染骨架，加载完成后换成卡片', async () => {
     await renderHome()
     expect(document.querySelectorAll('.skeleton-card').length).toBeGreaterThan(0)
@@ -72,12 +85,13 @@ describe('HomeView 列表', () => {
     const card = screen.getByRole('link', { name: '项目展示平台' }).closest('article')
     expect(card).not.toBeNull()
     const scope = within(card as HTMLElement)
-    expect(scope.getByText('★ 128')).toBeInTheDocument()
-    expect(scope.getByText(/更新$/)).toBeInTheDocument()
+    expect(scope.getByText(/★ 128/)).toBeInTheDocument()
+    // 走查 #4：底栏是「★ 128 · 2 天前」，不再是绝对日期
+    expect(scope.getByText(/· \d+ 天前|· 今天|· 昨天/)).toBeInTheDocument()
     expect(scope.getByText('进行中')).toBeInTheDocument()
     expect(scope.getByText('把散落在收藏夹里的项目收进一个可检索、可记笔记的展示站。')).toBeInTheDocument()
     // 外部入口可访问名带项目名 + 新窗口提示
-    expect(scope.getByRole('link', { name: '仓库 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
+    expect(scope.getByRole('link', { name: '源码仓库 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
       'href',
       'https://github.com/jsonbug/portfolio',
     )
@@ -166,18 +180,26 @@ describe('HomeView 搜索', () => {
     expect(cardNames()).toEqual(['抓取工具箱'])
   })
 
-  it('无结果时展示空态并可一键清除筛选', async () => {
+  it('无结果时展示空态：把搜索词念回去，并可一键清除全部筛选（走查 #29）', async () => {
     const { router } = await renderHome('/?q=不存在的项目')
-    const empty = (await screen.findByText('没有符合条件的项目')).closest('.empty') as HTMLElement
+    const empty = (await screen.findByText('「不存在的项目」没有匹配项目')).closest('.empty') as HTMLElement
     expect(empty).not.toBeNull()
     expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()
 
-    await fireEvent.click(within(empty).getByRole('button', { name: '清除筛选' }))
+    await fireEvent.click(within(empty).getByRole('button', { name: '清除全部筛选' }))
 
     await waitFor(() => expect(cardNames().sort()).toEqual([...CARD_NAMES].sort()))
     expect(router.currentRoute.value.query).toEqual({})
   })
 })
+
+/** 批乙起技术栈收进下拉：先展开面板再点选项。 */
+async function openTechPanel(): Promise<void> {
+  if (screen.queryByRole('group', { name: '技术栈筛选' }) === null) {
+    await fireEvent.click(screen.getByTestId('tech-trigger'))
+  }
+  await screen.findByRole('group', { name: '技术栈筛选' })
+}
 
 describe('HomeView 技术栈与排序', () => {
   beforeEach(() => resetMockDb())
@@ -186,6 +208,7 @@ describe('HomeView 技术栈与排序', () => {
     const { router } = await renderHome()
     await waitForList()
 
+    await openTechPanel()
     await fireEvent.click(screen.getByRole('button', { name: 'Python' }))
     await waitFor(() => expect(cardNames()).toEqual(['抓取工具箱']))
     expect(router.currentRoute.value.query.tech).toEqual(['Python'])
@@ -199,6 +222,7 @@ describe('HomeView 技术栈与排序', () => {
     const { router } = await renderHome()
     await waitForList()
 
+    await openTechPanel()
     const chip = screen.getByRole('button', { name: 'Python' })
     // 不 await：模拟极快的连点（路由还没落定）
     await fireEvent.click(chip)
@@ -206,6 +230,34 @@ describe('HomeView 技术栈与排序', () => {
 
     await waitFor(() => expect(cardNames().sort()).toEqual([...CARD_NAMES].sort()))
     expect(router.currentRoute.value.query.tech).toBeUndefined()
+  })
+
+  it('技术栈下拉有显式选中态：触发按钮带数量、面板里列出已选', async () => {
+    await renderHome()
+    await waitForList()
+
+    const trigger = screen.getByTestId('tech-trigger')
+    expect(trigger).toHaveTextContent('技术栈')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+    await fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    const panel = await screen.findByRole('group', { name: '技术栈筛选' })
+    expect(within(panel).getByText('已选 0 个')).toBeInTheDocument()
+
+    await fireEvent.click(within(panel).getByRole('button', { name: 'Python' }))
+    await waitFor(() => expect(cardNames()).toEqual(['抓取工具箱']))
+
+    // 选中个数写在触发按钮上，已选名单在面板里可见
+    await openTechPanel()
+    expect(trigger).toHaveTextContent('1')
+    const selected = await screen.findByRole('list', { name: '已选技术栈' })
+    expect(within(selected).getByRole('button', { name: '移除 Python' })).toBeInTheDocument()
+
+    // Escape 收起并把焦点还给触发按钮
+    await fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'))
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('排序可切到 star 降序，并同步 URL', async () => {

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { getMockDb, handleMockRequest, resetMockDb } from '@/mocks/handlers'
@@ -57,9 +57,16 @@ describe('ProjectDetailView', () => {
     expect(within(aside).getByRole('heading', { name: '相关链接' })).toBeInTheDocument()
     expect(within(aside).getByRole('heading', { name: '技术栈' })).toBeInTheDocument()
 
-    // 固定列：发布状态 + 进展 + 4 列（效果图的 6 行）
+    // 02 稿 + D6：「发布状态」与「进展」两行两徽标，上下堆叠不并排；固定列共 6 行
     expect(within(aside).getByText('发布状态')).toBeInTheDocument()
     expect(within(aside).getByText('进展')).toBeInTheDocument()
+    // 6 行固定 + 种子里 2 条追加
+    expect(aside.querySelectorAll('.kv-row')).toHaveLength(8)
+    expect(aside.querySelector('.count')?.textContent).toContain('6 固定')
+    // 两行两徽标：不再有合并行「状态」
+    expect(within(aside).queryByText('状态')).not.toBeInTheDocument()
+    expect(within(aside).getByText('已发布')).toBeInTheDocument()
+    expect(within(aside).getByText('进行中')).toBeInTheDocument()
     expect(within(aside).getByText('前端负责人')).toBeInTheDocument()
     expect(within(aside).getByText('MIT')).toBeInTheDocument()
     expect(within(aside).getByText('2024')).toBeInTheDocument()
@@ -75,11 +82,13 @@ describe('ProjectDetailView', () => {
     renderDetail('portfolio-platform')
     await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
 
-    expect(screen.getByRole('link', { name: '源码仓库 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
+    // hero 主操作与右栏清单现在同名（F3 把 repo 文案统一成「源码仓库」），按容器区分
+    const hero = screen.getByRole('banner')
+    expect(within(hero).getByRole('link', { name: '源码仓库 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
       'href',
       'https://github.com/jsonbug/portfolio',
     )
-    expect(screen.getByRole('link', { name: '访问官网 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
+    expect(within(hero).getByRole('link', { name: '访问官网 · 项目展示平台（新窗口打开）' })).toHaveAttribute(
       'href',
       'https://portfolio.example.com',
     )
@@ -133,7 +142,7 @@ describe('ProjectDetailView', () => {
 
     renderDetail('unknown-link-project')
     const aside = await screen.findByRole('complementary', { name: '项目速览' })
-    const repo = within(aside).getByRole('link', { name: '仓库 · 未知状态项目（新窗口打开）' })
+    const repo = within(aside).getByRole('link', { name: '源码仓库 · 未知状态项目（新窗口打开）' })
     expect(repo).not.toHaveClass('link-anchor--failed')
     expect(repo).not.toHaveTextContent('⚠')
     expect(repo).not.toHaveAttribute('title')
@@ -171,7 +180,8 @@ describe('ProjectDetailView', () => {
   it('相关链接：类型文案 + 裸域名 + 新窗口 rel', async () => {
     renderDetail('portfolio-platform')
 
-    const link = await screen.findByRole('link', { name: '仓库 · 项目展示平台（新窗口打开）' })
+    const aside = await screen.findByRole('complementary', { name: '项目速览' })
+    const link = within(aside).getByRole('link', { name: '源码仓库 · 项目展示平台（新窗口打开）' })
     expect(link).toHaveAttribute('href', 'https://github.com/jsonbug/portfolio')
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
@@ -212,15 +222,105 @@ describe('ProjectDetailView', () => {
 
     expect(await screen.findByRole('heading', { level: 1, name: '极简项目' })).toBeInTheDocument()
     const aside = screen.getByRole('complementary', { name: '项目速览' })
-    // 发布状态 / 进展 恒有，所以元数据 panel 一定在；其余两 panel 与空固定列不渲染
+    // 发布状态 + 进展两行恒有，所以元数据 panel 一定在；其余两 panel 与空固定列不渲染
     expect(within(aside).getByRole('heading', { name: '元数据' })).toBeInTheDocument()
     expect(within(aside).getByText('发布状态')).toBeInTheDocument()
-    expect(within(aside).getByText('进展')).toBeInTheDocument()
-    expect(within(aside).queryByText('角色')).not.toBeInTheDocument()
+    expect(aside.querySelectorAll('.kv-row')).toHaveLength(2)
+    expect(within(aside).queryByText('我的角色')).not.toBeInTheDocument()
     expect(within(aside).queryByRole('heading', { name: '相关链接' })).not.toBeInTheDocument()
     expect(within(aside).queryByRole('heading', { name: '技术栈' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '相关笔记' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '项目介绍' })).not.toBeInTheDocument()
+  })
+
+  it('面包屑「项目 / 名称」+ 右上「更新于」+ 各 panel 标题带计数（稿 02 的版面要素）', async () => {
+    renderDetail('portfolio-platform')
+    await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
+
+    const crumb = screen.getByRole('navigation', { name: '面包屑' })
+    expect(within(crumb).getByRole('link', { name: '项目' })).toBeInTheDocument()
+    expect(within(crumb).getByText('项目展示平台')).toBeInTheDocument()
+    expect(within(crumb).getByText(/^更新于 \d{4}-\d{2}-\d{2}$/)).toBeInTheDocument()
+
+    // 稿上「相关笔记 4 篇」「元数据 6 固定 · 2 追加」「相关链接 4」「技术栈 6」都是标题旁的计数
+    const notes = screen.getByRole('heading', { name: '相关笔记' }).closest('section') as HTMLElement
+    expect(within(notes).getByText('2 篇')).toBeInTheDocument()
+
+    const aside = screen.getByRole('complementary', { name: '项目速览' })
+    expect(within(aside).getByText(/^\d+ 固定 · 2 追加$/)).toBeInTheDocument() // 5 固定（F5 合并后）
+    expect(within(aside).getByText('2')).toBeInTheDocument() // 相关链接 2 条
+    expect(within(aside).getByText('4')).toBeInTheDocument() // 技术栈 4 个
+  })
+
+  it('截图：一次一张 + 左右箭头 + 「截图 n / N」+ 图注（契约 4.1.1）', async () => {
+    renderDetail('portfolio-platform')
+    await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
+
+    const figure = screen.getByRole('group', { name: '项目截图' })
+    const first = within(figure).getByRole('img')
+    // 有图注 → alt 用图注；首图 eager
+    expect(first).toHaveAttribute('alt', '项目列表：分段与筛选条')
+    expect(first).toHaveAttribute('loading', 'eager')
+    expect(within(figure).getByText('截图 1 / 2')).toBeInTheDocument()
+
+    await fireEvent.click(within(figure).getByRole('button', { name: '下一张截图' }))
+    const second = within(figure).getByRole('img')
+    // 无图注 → alt 回退成「项目名 截图 n」，非首图 lazy
+    expect(second).toHaveAttribute('alt', '项目展示平台 截图 2')
+    expect(second).toHaveAttribute('loading', 'lazy')
+    expect(within(figure).getByText('截图 2 / 2')).toBeInTheDocument()
+
+    // 末张再「下一张」回到第一张（不越界、不置空）
+    await fireEvent.click(within(figure).getByRole('button', { name: '下一张截图' }))
+    expect(within(figure).getByText('截图 1 / 2')).toBeInTheDocument()
+  })
+
+  it('截图：过不了 safeHttpUrl 的历史脏数据整项不渲染', async () => {
+    // 接口层已挡住非法 URL，但库里可能有历史数据——渲染侧再挡一次，不留裂图
+    getMockDb().screenshots.push({
+      id: 'shot_legacy',
+      project_id: 'proj_portfolio',
+      url: 'javascript:alert(1)',
+      caption: '脏数据',
+      sort: 9,
+    })
+    renderDetail('portfolio-platform')
+    await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
+
+    const figure = screen.getByRole('group', { name: '项目截图' })
+    expect(within(figure).getByText('截图 1 / 2')).toBeInTheDocument()
+    expect(within(figure).queryByText('脏数据')).not.toBeInTheDocument()
+    expect(figure.querySelectorAll('img')).toHaveLength(1)
+  })
+
+  it('指标：只取 metadata 里 kind=metric 的条目做统计格，最多 4 格', async () => {
+    renderDetail('portfolio-platform')
+    await screen.findByRole('heading', { level: 1, name: '项目展示平台' })
+
+    const cells = screen.getAllByRole('listitem').filter((li) => li.classList.contains('metric-cell'))
+    // 值 + 标签两段（模板里没有空格分隔，断言用各段文本更稳）
+    expect(cells.map((li) => li.querySelector('.metric-value')?.textContent)).toEqual([
+      '42 KB',
+      '60 fps',
+    ])
+    expect(cells.map((li) => li.querySelector('.metric-label')?.textContent)).toEqual([
+      'gzip 包体',
+      '长音频渲染',
+    ])
+
+    // 右栏元数据 panel 只放 meta 条目：指标卡条目不能同时出现在两边
+    const aside = screen.getByRole('complementary', { name: '项目速览' })
+    expect(within(aside).getByText('代码行数')).toBeInTheDocument()
+    expect(within(aside).queryByText('gzip 包体')).not.toBeInTheDocument()
+  })
+
+  it('零截图 + 零指标：两个区块都不渲染（不留空态框）', async () => {
+    renderDetail('crawler-tools')
+    await screen.findByRole('heading', { level: 1, name: '抓取工具箱' })
+
+    expect(screen.queryByRole('group', { name: '项目截图' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/截图 \d+ \/ \d+/)).not.toBeInTheDocument()
+    expect(document.querySelectorAll('.metric-cell')).toHaveLength(0)
   })
 
   it('旧 slug 301 后仍能渲染（mock 跟随重定向）', async () => {

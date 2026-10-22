@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { getPublicNote, listPublicNotes } from '@/api/notes'
+import { getPublicProject } from '@/api/projects'
+import NoteTree from '@/components/NoteTree.vue'
+import ProgressBadge from '@/components/ProgressBadge.vue'
 import { renderMarkdown } from '@/utils/markdown'
 import { formatDate, readingTimeMinutes } from '@/utils/text'
-import type { NoteDetail, NoteSummary } from '@/types'
+import type { NoteDetail, NoteSummary, ProjectDetail } from '@/types'
 
 const props = defineProps<{ slug: string }>()
 const router = useRouter()
@@ -13,8 +16,17 @@ const note = ref<NoteDetail | null>(null)
 const loading = ref(true)
 const error = ref('')
 
+/** 右栏「所属项目」卡：笔记只带 slug/name，描述与进展要再取一次项目详情。 */
+const project = ref<ProjectDetail | null>(null)
+
 /** 上下篇：在已取的前 100 篇里按 published_at 倒序定位相邻两条。 */
 const siblings = ref<NoteSummary[]>([])
+
+/** 左栏笔记树：搜索词独立于上下篇，树里过滤不影响「相邻两条」的口径。 */
+const NOTES_PAGE_SIZE = 100
+const treeItems = ref<NoteSummary[]>([])
+const treeTotal = ref(0)
+const treeQuery = ref('')
 
 const bodyHtml = computed(() => (note.value ? renderMarkdown(note.value.body_md) : ''))
 const readMinutes = computed(() => (note.value ? readingTimeMinutes(note.value.body_md) : 0))
@@ -23,6 +35,8 @@ const bodyEl = ref<HTMLElement | null>(null)
 /** 正文标题：切换笔记后把焦点交过来（读屏从这里开始念）。 */
 const titleEl = ref<HTMLElement | null>(null)
 const toc = ref<{ id: string; text: string; level: number }[]>([])
+/** 目录当前项：滚动时高亮（左侧 2px 主色竖条）。 */
+const activeId = ref('')
 
 const index = computed(() => siblings.value.findIndex((item) => item.slug === note.value?.slug))
 /** 当前笔记不在「最近 100 篇」里：上下篇无法定位，明说而不是静默不渲染。 */
@@ -50,6 +64,20 @@ async function buildToc(): Promise<void> {
   })
 }
 
+/** 取正文标题里「最后一个已经滚过顶部的」，作为目录当前项。 */
+function syncActiveHeading(): void {
+  const root = bodyEl.value
+  if (!root) return
+  const nodes = Array.from(root.querySelectorAll<HTMLElement>('h2, h3'))
+  // 120px ≈ 吸顶留白；没有任何标题滚过时高亮第一条，避免目录「没有当前项」。
+  let current = nodes[0]?.id ?? ''
+  for (const node of nodes) {
+    if (node.getBoundingClientRect().top <= 120) current = node.id
+    else break
+  }
+  activeId.value = current
+}
+
 async function load(slug: string): Promise<void> {
   loading.value = true
   error.value = ''
@@ -61,6 +89,15 @@ async function load(slug: string): Promise<void> {
     }
     await nextTick()
     titleEl.value?.focus()
+    void getPublicProject(note.value.project.slug)
+      .then((detail) => {
+        project.value = detail
+      })
+      .catch(() => {
+        // 项目不可见（下架/软删）时右栏只显示名称，不影响正文阅读。
+        project.value = null
+      })
+    syncActiveHeading()
   } catch (e) {
     note.value = null
     toc.value = []
@@ -80,19 +117,57 @@ watch(
 )
 
 onMounted(async () => {
+  window.addEventListener('scroll', syncActiveHeading, { passive: true })
+  window.addEventListener('resize', syncActiveHeading, { passive: true })
   void load(props.slug)
+  await loadSiblings()
+  await loadTree('')
+})
+
+async function loadSiblings(): Promise<void> {
   try {
-    const res = await listPublicNotes({ page: 1, pageSize: 100 })
+    const res = await listPublicNotes({ page: 1, pageSize: NOTES_PAGE_SIZE })
     siblings.value = res.items
   } catch {
     siblings.value = []
   }
-})
+}
+
+async function loadTree(search: string): Promise<void> {
+  try {
+    const res = await listPublicNotes({
+      search: search || undefined,
+      page: 1,
+      pageSize: NOTES_PAGE_SIZE,
+    })
+    treeItems.value = res.items
+    treeTotal.value = res.total
+  } catch {
+    treeItems.value = []
+    treeTotal.value = 0
+  }
+}
+
+function onTreeSearch(value: string): void {
+  treeQuery.value = value
+  void loadTree(value)
+}
+
+/** 选中树里的另一篇：换路由（不动页内锚点），搜索词跟着 URL 走。 */
+function onTreeSelect(slug: string): void {
+  const query = treeQuery.value ? { q: treeQuery.value } : undefined
+  void router.push({ name: 'note-detail', params: { slug }, query })
+}
 
 watch(
   () => props.slug,
   (slug) => void load(slug),
 )
+
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', syncActiveHeading)
+  window.removeEventListener('resize', syncActiveHeading)
+})
 </script>
 
 <template>
@@ -121,17 +196,32 @@ watch(
         </ul>
       </header>
 
+      <!-- 09/10 稿：左栏笔记树、中栏正文、右栏「本页目录」+「所属项目」 -->
       <div class="layout">
+        <aside class="side side--left" aria-label="笔记树">
+          <NoteTree
+            :items="treeItems"
+            :selected-slug="note.slug"
+            :search="treeQuery"
+            :total="treeTotal"
+            :page-size="NOTES_PAGE_SIZE"
+            @update:search="onTreeSearch"
+            @select="onTreeSelect"
+          />
+        </aside>
+
         <article class="card article">
           <div ref="bodyEl" class="markdown" v-html="bodyHtml" />
         </article>
 
         <aside class="side" aria-live="polite">
           <section v-if="toc.length" class="card panel" aria-labelledby="toc-title">
-            <h2 id="toc-title" class="panel-title type-small">目录</h2>
+            <h2 id="toc-title" class="panel-title type-small">本页目录</h2>
             <ul class="toc">
               <li v-for="item in toc" :key="item.id" :class="`toc-${item.level}`">
-                <a :href="`#${item.id}`">{{ item.text }}</a>
+                <a :href="`#${item.id}`" :aria-current="item.id === activeId ? 'location' : undefined">
+                  {{ item.text }}
+                </a>
               </li>
             </ul>
           </section>
@@ -139,7 +229,13 @@ watch(
           <section class="card panel" aria-labelledby="project-title">
             <h2 id="project-title" class="panel-title type-small">所属项目</h2>
             <RouterLink :to="{ name: 'project-detail', params: { slug: note.project.slug } }" class="project-card">
-              <span class="project-name">{{ note.project.name }}</span>
+              <span class="project-head">
+                <span class="project-name">{{ note.project.name }}</span>
+                <ProgressBadge v-if="project" :progress="project.progress" />
+              </span>
+              <span v-if="project?.summary" class="project-summary type-small">{{
+                project.summary
+              }}</span>
               <span class="type-mono project-slug">{{ note.project.slug }}</span>
             </RouterLink>
           </section>
@@ -202,22 +298,87 @@ watch(
   flex-wrap: wrap;
 }
 .tag {
-  padding: 2px 10px;
-  font-size: var(--fs-mono);
-  line-height: var(--lh-mono);
-  color: var(--c-primary-strong);
-  background: var(--c-primary-soft);
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1;
+  color: var(--c-text);
+  background: var(--c-fill);
   border-radius: var(--r-tag);
 }
 .layout {
+  /* 09/10 稿：左栏笔记树、中栏正文、右栏目录 + 所属项目，同一行顶部对齐 */
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 260px;
+  grid-template-columns: 240px minmax(0, 1fr) 240px;
   gap: var(--space-24);
   align-items: start;
 }
-@media (max-width: 1023px) {
+/* 显式指定轨道，避免「没有目录时正文被塞进 200px 左栏」 */
+.layout > .article {
+  grid-column: 2;
+  grid-row: 1;
+}
+.layout > .side--left {
+  grid-column: 1;
+  grid-row: 1;
+}
+.layout > .side:not(.side--left) {
+  grid-column: 3;
+  grid-row: 1;
+}
+.side--left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  position: sticky;
+  top: var(--space-24);
+  max-height: calc(100vh - var(--space-48));
+  overflow: auto;
+}
+@media (max-width: 1180px) {
+  /* 中窄屏：笔记树落到正文上方整宽，右栏（目录 + 所属项目）留在正文右侧 */
   .layout {
+    grid-template-columns: minmax(0, 1fr) 240px;
+  }
+  .layout > .side--left {
+    grid-column: 1;
+    grid-row: 1;
+    position: static;
+    max-height: none;
+  }
+  .layout > .article {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .layout > .side:not(.side--left) {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}
+@media (max-width: 899px) {
+  .layout,
+  .layout--two {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .layout > .article,
+  .layout > .side--left,
+  .layout > .side:not(.side--left),
+  .layout--two > .article,
+  .layout--two > .side:not(.side--left) {
+    grid-column: 1;
+    position: static;
+  }
+  .layout > .side--left {
+    grid-row: 1;
+  }
+  .layout > .article {
+    grid-row: 2;
+  }
+  .layout > .side:not(.side--left) {
+    grid-row: 3;
   }
 }
 .article {
@@ -255,6 +416,15 @@ watch(
   font-size: var(--fs-small);
   line-height: var(--lh-small);
   text-decoration: none;
+  /* 当前项：2px 主色竖条（走查 #20），非当前项保留同宽透明条避免文字跳动 */
+  display: block;
+  padding-left: var(--space-8);
+  border-left: 2px solid transparent;
+}
+.toc a[aria-current] {
+  color: var(--c-primary-strong);
+  border-left-color: var(--c-primary);
+  font-weight: var(--fw-semibold);
 }
 .toc a:hover {
   color: var(--c-primary-strong);
@@ -275,10 +445,24 @@ watch(
 .project-card:hover {
   background: var(--c-fill);
 }
+.project-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
 .project-name {
   color: var(--c-primary-strong);
   font-size: var(--fs-body);
   line-height: var(--lh-body);
+}
+.project-summary {
+  color: var(--c-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .project-slug {
   color: var(--c-text-secondary);
@@ -349,12 +533,20 @@ watch(
 }
 .markdown :deep(pre) {
   overflow: auto;
-  background: var(--c-fill);
+  /* 走查 #17：代码块深色（正文浅底上唯一的一块暗面，用来分隔代码与叙述） */
+  background: var(--c-code-bg);
+  color: var(--c-code-text);
   border-radius: var(--r-control);
   padding: var(--space-16);
+  margin: 0 0 var(--space-12);
+}
+.markdown :deep(pre code) {
+  background: none;
+  padding: 0;
+  color: inherit;
 }
 .markdown :deep(code) {
-  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--fs-mono);
   background: var(--c-fill);
   border-radius: var(--r-tag);
@@ -364,10 +556,26 @@ watch(
   color: var(--c-primary);
 }
 .markdown :deep(blockquote) {
+  /* 走查 #18：陶土红竖条 + 桃色底 + 小标签 */
+  position: relative;
   margin: 0 0 var(--space-12);
-  padding-left: var(--space-16);
-  border-left: 3px solid var(--c-border);
-  color: var(--c-text-secondary);
+  padding: var(--space-12) var(--space-16) var(--space-12) var(--space-16);
+  border-left: 3px solid var(--c-accent);
+  border-radius: 0 var(--r-control) var(--r-control) 0;
+  background: var(--c-accent-soft);
+  color: var(--c-text);
+}
+.markdown :deep(blockquote)::before {
+  content: '备注';
+  display: block;
+  margin-bottom: 2px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--c-accent);
+}
+.markdown :deep(blockquote p:last-child) {
+  margin-bottom: 0;
 }
 .siblings-hint {
   margin: 0;
