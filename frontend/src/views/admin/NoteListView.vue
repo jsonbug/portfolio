@@ -254,29 +254,6 @@ function clearFilters(): void {
   gap: var(--space-12);
   padding: var(--space-12);
 }
-.segments {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--c-fill);
-  border-radius: var(--r-control);
-}
-.segment {
-  min-height: 32px;
-  padding: 0 var(--space-12);
-  border: 0;
-  border-radius: var(--r-tag);
-  background: transparent;
-  color: var(--c-text-secondary);
-  font-size: var(--fs-small);
-  cursor: pointer;
-}
-.segment--active {
-  background: var(--c-surface);
-  color: var(--c-ink);
-  font-weight: var(--fw-semibold);
-  box-shadow: var(--shadow-e1);
-}
 .search {
   flex: 1 1 220px;
   min-width: 160px;
@@ -348,24 +325,5 @@ function clearFilters(): void {
 .footer-text {
   color: var(--c-text-secondary);
   font-size: var(--fs-small);
-}
-.pager {
-  display: flex;
-  gap: var(--space-4);
-}
-.pager-btn {
-  min-width: 28px;
-  min-height: 28px;
-  border: 1px solid var(--c-control-border);
-  border-radius: var(--r-tag);
-  background: var(--c-surface);
-  color: var(--c-text);
-  font-size: 13px;
-  cursor: pointer;
-}
-.pager-btn--active {
-  border-color: var(--c-primary-strong);
-  color: var(--c-primary-strong);
-  font-weight: var(--fw-semibold);
 }
 </style>

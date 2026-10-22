@@ -570,40 +570,6 @@ onMounted(() => void load())
   white-space: nowrap;
 }
 
-.segments {
-  display: inline-flex;
-  gap: var(--space-4);
-  padding: var(--space-4);
-  background: var(--c-fill);
-  border-radius: var(--r-control);
-}
-.segment {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: var(--touch-min);
-  padding: 0 12px;
-  font-size: 13px;
-  color: var(--c-text);
-  background: transparent;
-  border: none;
-  border-radius: var(--r-tag);
-  cursor: pointer;
-}
-.segment:hover {
-  background: var(--c-surface);
-}
-.segment--active {
-  color: var(--c-primary-strong);
-  background: var(--c-surface);
-  box-shadow: var(--shadow-e1);
-  font-weight: 600;
-}
-.segment-count {
-  font-size: var(--fs-mono);
-  color: var(--c-text-secondary);
-}
-
 .error {
   margin: 0;
   padding: 8px 12px;
@@ -852,31 +818,6 @@ onMounted(() => void load())
 .footer-text {
   font-size: var(--fs-mono);
   color: var(--c-text-secondary);
-}
-.pager {
-  display: inline-flex;
-  gap: var(--space-4);
-}
-.pager-btn {
-  min-width: 32px;
-  min-height: 32px;
-  padding: 0 var(--space-8);
-  font-family: var(--font-mono);
-  /* 12px 的页码在白底上偏小，后台表尾用 13px 更稳 */
-  font-size: 13px;
-  line-height: 1;
-  color: var(--c-text);
-  background: var(--c-fill);
-  border: 1px solid transparent;
-  border-radius: var(--r-tag);
-  cursor: pointer;
-}
-.pager-btn:hover {
-  border-color: var(--c-control-border);
-}
-.pager-btn--active {
-  color: var(--c-surface);
-  background: var(--c-primary-strong);
 }
 
 .visibility {

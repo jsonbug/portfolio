@@ -266,39 +266,7 @@ function clearTech(): void {
   border-radius: var(--r-card);
   background: var(--c-surface);
 }
-.segments {
-  display: inline-flex;
-  padding: 2px;
-  gap: 2px;
-  background: var(--c-fill);
-  border-radius: var(--r-control);
-}
-.segment {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-4);
-  min-height: 32px;
-  padding: 0 var(--space-12);
-  border: 0;
-  border-radius: var(--r-tag);
-  background: transparent;
-  color: var(--c-text-secondary);
-  font-size: var(--fs-small);
-  cursor: pointer;
-}
-.segment:hover {
-  color: var(--c-ink);
-}
-.segment--active {
-  background: var(--c-surface);
-  color: var(--c-ink);
-  font-weight: var(--fw-semibold);
-  box-shadow: var(--shadow-e1);
-}
-.segment-count {
-  font-size: var(--fs-mono);
-  color: var(--c-text-secondary);
-}
+/* 分段控件与页码的样式在 style.css（通用控件层），这里只放本页专有的布局 */
 .search {
   flex: 1 1 220px;
   min-width: 160px;

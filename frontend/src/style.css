@@ -302,10 +302,111 @@ a:hover {
   border-radius: var(--r-tag);
   cursor: pointer;
 }
+
+/* 分段控件：前台筛选条（全部/进行中/已上线）与后台状态分段共用一份 */
+.segments {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--c-fill);
+  border-radius: var(--r-control);
+}
+.segment {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 32px;
+  padding: 0 var(--space-12);
+  border: 0;
+  border-radius: var(--r-tag);
+  background: transparent;
+  color: var(--c-text-secondary);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.segment:hover {
+  color: var(--c-ink);
+}
+.segment--active {
+  background: var(--c-surface);
+  color: var(--c-ink);
+  font-weight: var(--fw-semibold);
+  box-shadow: var(--shadow-e1);
+}
+.segment-count {
+  font-size: var(--fs-mono);
+  color: var(--c-text-secondary);
+}
+
+/* 页码：后台项目列表与笔记列表共用一份 */
+.pager {
+  display: inline-flex;
+  gap: var(--space-4);
+}
+.pager-btn {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 var(--space-8);
+  font-family: var(--font-mono);
+  /* 12px 的页码在白底上偏小，后台表尾用 13px 更稳 */
+  font-size: 13px;
+  line-height: 1;
+  color: var(--c-text);
+  background: var(--c-fill);
+  border: 1px solid transparent;
+  border-radius: var(--r-tag);
+  cursor: pointer;
+}
+.pager-btn:hover {
+  border-color: var(--c-control-border);
+}
+.pager-btn--active {
+  color: var(--c-surface);
+  background: var(--c-primary-strong);
+}
+
+/*
+ * 触控设备（pointer: coarse）：可点控件的**热区**至少 44×44。
+ *
+ * 注意抬的是可点面积，不是行高——只动 min-height/min-width 与水平内边距，
+ * 字号与 line-height 保持桌面值，否则「变高 8px 但字没变」看起来只是间距怪。
+ * 这一层放在通用控件上（而不是各页面各写一遍），新页面复用这些类就自动达标。
+ */
 @media (pointer: coarse) {
+  .btn,
+  .btn-sm,
+  .input,
+  .select,
+  .textarea,
+  .segment,
+  .pager-btn {
+    min-height: var(--touch-min);
+  }
   .btn-icon {
     width: var(--touch-min);
     height: var(--touch-min);
+  }
+  .segment {
+    padding: 0 var(--space-16);
+  }
+  /* 宽度也要够：页码、轮播箭头、顶栏导航这类方/短控件只抬高度会留下「窄条」 */
+  .pager-btn,
+  .shot-nav button,
+  .site-nav .nav-link {
+    min-width: var(--touch-min);
+  }
+  .site-nav .nav-link {
+    justify-content: center;
+  }
+  /* 面包屑是文字链，触控下同样要有 44 的可点面积 */
+  nav[aria-label='面包屑'] a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--touch-min);
+    min-height: var(--touch-min);
+    padding: 0 var(--space-4);
   }
 }
 
