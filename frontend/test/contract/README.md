@@ -93,6 +93,7 @@ npm run contract -- --source both       # 双向：同一张表两遍 + 逐行 d
 | 截图 `screenshots[]` 与元数据 `kind('meta'｜'metric')` | 契约条文已写，可执行行施工中（见 v1.2.6） |
 | 链接健康检查的真实网络判定 | `LINK_CHECK_ENABLED=0` 下只验「保存即写入 `unknown`」与手动重检端点形状，不验外部站点可达性 |
 | 前台 UI 行为 | 那是 `vitest` 组件测试与人工冒烟的范围，本套件只打 HTTP |
+| 触控热区与横向滚动（F7） | 全在样式层，本套件碰不到。断言在 `src/styles/touch.spec.ts`（令牌 + coarse 层覆盖 + 不得改字号），实测在 390×844 触控视口下用 Chrome 量 `documentElement.scrollWidth` 与各控件包围盒 |
 
 ## 两个 CI job 的边界
 

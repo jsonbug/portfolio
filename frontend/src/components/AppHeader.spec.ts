@@ -48,3 +48,42 @@ describe('AppHeader（01/03/07 稿共有件）', () => {
     expect(screen.getByRole('searchbox', { name: '搜索项目' })).toHaveValue('抓取')
   })
 })
+
+describe('AppHeader 窄屏搜索折叠（F7-1，390 竖屏不横向滚动）', () => {
+  it('折叠按钮带 aria-expanded，点开后表单进入展开态并聚焦输入框', async () => {
+    await renderHeader()
+    const toggle = screen.getByRole('button', { name: '打开搜索' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    await fireEvent.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(toggle.closest('form')).toHaveClass('header-search--open')
+    expect(screen.getByRole('searchbox', { name: '搜索项目' })).toHaveFocus()
+  })
+
+  it('Escape 收起搜索并把焦点还给折叠按钮（不是丢给 body）', async () => {
+    await renderHeader()
+    const toggle = screen.getByRole('button', { name: '打开搜索' })
+    await fireEvent.click(toggle)
+
+    await fireEvent.keyDown(screen.getByRole('searchbox', { name: '搜索项目' }), { key: 'Escape' })
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle.closest('form')).not.toHaveClass('header-search--open')
+    expect(toggle).toHaveFocus()
+  })
+
+  it('提交后自动收起折叠态（跳转回来不再被展开层挡住页面）', async () => {
+    const router = await renderHeader()
+    const toggle = screen.getByRole('button', { name: '打开搜索' })
+    await fireEvent.click(toggle)
+    const box = screen.getByRole('searchbox', { name: '搜索项目' })
+
+    await fireEvent.update(box, '抓取')
+    await fireEvent.submit(box.closest('form') as HTMLFormElement)
+
+    await waitFor(() => expect(router.currentRoute.value.query.q).toBe('抓取'))
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
+})
