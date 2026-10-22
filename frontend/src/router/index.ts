@@ -54,6 +54,7 @@ const router = createRouter({
           component: () => import('@/views/admin/ProjectEditView.vue'),
           props: true,
         },
+        { path: 'notes', name: 'admin-notes', component: () => import('@/views/admin/NoteListView.vue') },
         { path: 'notes/new', name: 'admin-note-new', component: () => import('@/views/admin/NoteEditView.vue') },
         {
           path: 'notes/:id',

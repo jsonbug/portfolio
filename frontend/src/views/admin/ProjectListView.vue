@@ -16,6 +16,7 @@ import LinkTypeIcon from '@/components/LinkTypeIcon.vue'
 import ProjectCover from '@/components/ProjectCover.vue'
 import ProgressBadge from '@/components/ProgressBadge.vue'
 import PublishStatusBadge from '@/components/PublishStatusBadge.vue'
+import { useAdminPagination } from '@/composables/useAdminPagination'
 import { useViewportWidth } from '@/composables/useViewportWidth'
 import { visibleColumns, type ProjectColumnKey } from './projectColumns'
 
@@ -47,15 +48,24 @@ function subline(item: AdminProjectListItem): string {
   return parts.join(' · ')
 }
 
-const PAGE_SIZE = 20
-
-const items = ref<AdminProjectListItem[]>([])
 const counts = ref({ all: 0, draft: 0, published: 0, archived: 0 })
-const total = ref(0)
-const page = ref(1)
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
-const loading = ref(false)
-const error = ref('')
+
+/**
+ * 取数与分页交给共用 composable（与后台笔记列表同一份实现），
+ * 只有「分段计数」是本页特有的，所以放在 fetch 回调里回填。
+ */
+const { items, total, page, totalPages, loading, error, pageSize: PAGE_SIZE, load, gotoPage, resetToFirstPage } =
+  useAdminPagination<AdminProjectListItem>(async (nextPage, size) => {
+    const res = await listAdminProjects({
+      includeDeleted: true,
+      page: nextPage,
+      pageSize: size,
+      search: search.value || undefined,
+      publish_status: segment.value || undefined,
+    })
+    counts.value = res.counts
+    return res
+  })
 /** 批量操作的结论文案（成功也要说话，否则用户不知道跳过的那些为什么没变）。 */
 const batchNotice = ref('')
 const search = ref('')
@@ -88,42 +98,6 @@ function toggleSelectAll() {
 }
 
 /**
- * 拉当前页。
- *
- * `allowFallback` 只对**自动回落**再放行一次：末页被删空（或手改 URL 到越界页）时，
- * 把页码拉回 `totalPages` 再取一次，避免出现「page=6、列表空、却没有分页控件」的不一致；
- * 回落一次仍空就照常显示空态，不做第二次递归。
- */
-async function load(allowFallback = true): Promise<void> {
-  loading.value = true
-  error.value = ''
-  try {
-    const res = await listAdminProjects({
-      includeDeleted: true,
-      page: page.value,
-      pageSize: PAGE_SIZE,
-      search: search.value || undefined,
-      publish_status: segment.value || undefined,
-    })
-    items.value = res.items
-    counts.value = res.counts
-    total.value = res.total
-
-    if (allowFallback && res.items.length === 0 && page.value > 1) {
-      const fallback = Math.max(1, totalPages.value)
-      if (fallback !== page.value) {
-        page.value = fallback
-        await load(false)
-      }
-    }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载失败'
-  } finally {
-    loading.value = false
-  }
-}
-
-/**
  * 分段切换。
  *
  * 同值点击**不是**空操作：它是「重新看第一页」的手势（在第 3 页点当前分段 = 回第 1 页），
@@ -131,18 +105,12 @@ async function load(allowFallback = true): Promise<void> {
  */
 function pickSegment(value: PublishStatus | '') {
   segment.value = value
-  page.value = 1
+  resetToFirstPage()
   void load()
 }
 
 function submitSearch() {
-  page.value = 1
-  void load()
-}
-
-function gotoPage(next: number) {
-  if (next < 1 || next > totalPages.value || next === page.value) return
-  page.value = next
+  resetToFirstPage()
   void load()
 }
 

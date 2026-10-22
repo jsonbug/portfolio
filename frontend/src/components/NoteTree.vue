@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { groupNotesByProject } from '@/utils/notes'
 import { MAX_SEARCH_LENGTH, clampSearch, formatDate } from '@/utils/text'
 import { debounce } from '@/utils/timing'
 import type { NoteSummary } from '@/types'
@@ -49,16 +50,8 @@ watch(
 
 onBeforeUnmount(() => commit.cancel())
 
-/** 按项目分组，保持后端返回（published_at 倒序）的顺序。 */
-const groups = computed(() => {
-  const map = new Map<string, { name: string; notes: NoteSummary[] }>()
-  for (const note of props.items) {
-    const group = map.get(note.project.slug) ?? { name: note.project.name, notes: [] }
-    group.notes.push(note)
-    map.set(note.project.slug, group)
-  }
-  return [...map.entries()].map(([slug, group]) => ({ slug, ...group }))
-})
+/** 按项目分组（与后台笔记列表共用 `utils/notes` 里的同一份逻辑）。 */
+const groups = computed(() => groupNotesByProject(props.items))
 
 const truncated = computed(() => props.total > props.pageSize)
 
@@ -85,8 +78,10 @@ const selectedHidden = computed(
       <p v-if="truncated" class="truncated">仅显示最近 {{ pageSize }} 篇</p>
       <p v-if="selectedHidden" class="hidden-note type-small">当前笔记不在筛选结果内</p>
       <p v-if="!groups.length" class="hint empty">{{ searchText ? '没有匹配的笔记' : '还没有笔记' }}</p>
-      <section v-for="group in groups" :key="group.slug" class="note-group">
-        <h2 class="group-title type-small">{{ group.name }}</h2>
+      <section v-for="group in groups" :key="group.key" class="note-group">
+        <h2 class="group-title type-small">
+          {{ group.name }}<span class="group-count tabular-nums" aria-hidden="true"> · {{ group.count }}</span>
+        </h2>
         <ul class="note-items">
           <li v-for="note in group.notes" :key="note.id">
             <button
@@ -136,6 +131,10 @@ const selectedHidden = computed(
   margin: 0;
   color: var(--c-text-secondary);
   font-weight: var(--fw-semibold);
+}
+.group-count {
+  color: var(--c-text-secondary);
+  font-weight: var(--fw-regular);
 }
 .note-items {
   list-style: none;

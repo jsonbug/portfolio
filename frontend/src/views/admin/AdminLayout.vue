@@ -1,9 +1,20 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
+const route = useRoute()
 const router = useRouter()
+
+/**
+ * 「笔记」这一项的当前态要同时认 `/admin/notes`（列表）与 `/admin/notes/:id`（编辑器）：
+ * 两者是不同的路由记录，`router-link-active` 只会在精确那条上生效，
+ * 所以在编辑器里侧栏会把「笔记」显示成未选中。
+ */
+const notesActive = computed(
+  () => route.path === '/admin/notes' || /^\/admin\/notes\/[^/]+$/.test(route.path),
+)
 
 function onLogout() {
   auth.logout()
@@ -28,6 +39,23 @@ function onLogout() {
             <rect x="2" y="12.5" width="12" height="1.4" rx="0.7" fill="currentColor" />
           </svg>
           项目列表
+        </RouterLink>
+        <RouterLink
+          class="nav-link"
+          :class="{ 'nav-link--active': notesActive }"
+          :to="{ name: 'admin-notes' }"
+        >
+          <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path
+              d="M3 2.5h6.5L13 6v7.5H3z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.3"
+              stroke-linejoin="round"
+            />
+            <path d="M5.2 8.2h5.6M5.2 10.6h3.6" fill="none" stroke="currentColor" stroke-width="1.2" />
+          </svg>
+          笔记
         </RouterLink>
         <RouterLink class="nav-link" :to="{ name: 'admin-project-new' }">
           <svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -115,7 +143,8 @@ function onLogout() {
   background: var(--c-fill);
   text-decoration: none;
 }
-.nav-link.router-link-active {
+.nav-link.router-link-active,
+.nav-link--active {
   color: var(--c-primary-strong);
   background: var(--c-primary-soft);
 }
